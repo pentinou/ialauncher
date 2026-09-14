@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IA Launcher</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">IA <b>Launcher</b> <span class="muted">· llama.cpp</span></div>
+  <div class="pills">
+    <span class="pill" id="pill-engine">moteur…</span>
+    <span class="pill" id="pill-server">serveur arrêté</span>
+  </div>
+</header>
+
+<div class="layout">
+<aside class="side">
+  <h2>Machine <button class="link" onclick="refreshHardware()" title="re-détecter">↻</button></h2>
+  <div id="machine"></div>
+  <div id="machine-notes" class="notes"></div>
+  <h2>Presets <button class="link" onclick="savePreset()" title="enregistrer la configuration courante">+ enregistrer</button></h2>
+  <div id="presets" class="presets"></div>
+  <h2>Dossiers</h2>
+  <div id="paths" class="muted small"></div>
+</aside>
+
+<main class="main">
+
+<!-- ================================ 1. MOTEUR -->
+<section class="card" id="sec-engine">
+  <h1><span class="num">1</span> Moteur d'inférence</h1>
+  <p class="lead">Le launcher pilote <b>llama-server</b> (projet llama.cpp), le programme qui charge le modèle et répond aux requêtes. Il doit être compilé pour votre matériel (CUDA pour NVIDIA, Metal pour Mac, Vulkan/ROCm pour AMD…).</p>
+  <div id="engine"></div>
+</section>
+
+<!-- ================================ 2. MODÈLE -->
+<section class="card" id="sec-model">
+  <h1><span class="num">2</span> Modèle</h1>
+  <p class="lead">Un modèle est un fichier <b>.gguf</b> : ses poids déjà quantifiés (compressés). <b>Plus le fichier est gros, plus il est intelligent… et plus il faut de mémoire.</b> Choisissez-en un déjà présent, ou téléchargez-en un.</p>
+  <div class="tabs">
+    <button class="tab active" data-tab="local" onclick="showTab('local')">Sur ce PC</button>
+    <button class="tab" data-tab="catalog" onclick="showTab('catalog')">Catalogue conseillé</button>
+    <button class="tab" data-tab="search" onclick="showTab('search')">Chercher sur Hugging Face</button>
+  </div>
+  <div class="tabpane" id="tab-local">
+    <div id="models-local"></div>
+    <div class="row-inline muted small">
+      <span>Ajouter un dossier de .gguf :</span>
+      <input id="add-dir" placeholder="/chemin/vers/dossier" size="40">
+      <button class="btn small" onclick="addDir()">ajouter</button>
+    </div>
+  </div>
+  <div class="tabpane hidden" id="tab-catalog"><div id="catalog"></div></div>
+  <div class="tabpane hidden" id="tab-search">
+    <div class="row-inline">
+      <input id="hf-q" placeholder="ex. gemma-4-12B, Qwen3.8, mistral…" size="40" onkeydown="if(event.key==='Enter')hfSearch()">
+      <button class="btn" onclick="hfSearch()">chercher</button>
+      <span class="muted small">seuls les dépôts GGUF sont listés</span>
+    </div>
+    <div id="hf-results"></div>
+  </div>
+  <div id="repo-panel" class="hidden"></div>
+  <div id="model-selected"></div>
+</section>
+
+<!-- ================================ MÉMOIRE -->
+<section class="card" id="sec-memory">
+  <h1>Où va la mémoire ?</h1>
+  <p class="lead" id="memory-lead">Sélectionnez un modèle pour voir la répartition prévue entre la <b>VRAM</b> (mémoire de la carte graphique, la plus rapide), la <b>RAM</b> (mémoire centrale, 5 à 20× plus lente pour un GPU) et le <b>SSD</b> (là où dorment les fichiers, et d'où llama.cpp relit ce qui ne tient pas en RAM).</p>
+  <div id="memory"></div>
+  <div id="warnings"></div>
+</section>
+
+<!-- ================================ 3. RÉGLAGES -->
+<section class="card" id="sec-settings">
+  <h1><span class="num">3</span> Réglages</h1>
+  <div class="reco-bar">
+    <div>
+      <b>Configuration automatique</b>
+      <span class="muted small">— le launcher part de l'idéal (tout sur le GPU) et ne sacrifie que le nécessaire, dans l'ordre le moins coûteux.</span>
+    </div>
+    <div class="row-inline">
+      <select id="goal">
+        <option value="balanced">Équilibrée</option>
+        <option value="speed">Vitesse maximale</option>
+        <option value="context">Contexte le plus long</option>
+        <option value="agent">Agent de code (Claude Code, Codex…)</option>
+      </select>
+      <button class="btn primary" onclick="recommendCfg()">Proposer la configuration optimale</button>
+    </div>
+  </div>
+  <div id="why" class="why hidden"></div>
+  <div id="settings"></div>
+</section>
+
+<!-- ================================ 4. LANCER -->
+<section class="card" id="sec-launch">
+  <h1><span class="num">4</span> Lancer</h1>
+  <p class="lead">Voici la commande exacte que le launcher exécute : tout ce qui est réglé au-dessus se traduit en options de <code>llama-server</code>. Vous pouvez la copier pour la lancer vous-même dans un terminal.</p>
+  <pre id="cmdline" class="cmd">—</pre>
+  <div class="row-inline">
+    <button class="btn primary" id="btn-start" onclick="startServer()">▶ Lancer</button>
+    <button class="btn" id="btn-stop" onclick="stopServer()" disabled>■ Arrêter</button>
+    <span id="server-state" class="muted"></span>
+  </div>
+  <div id="server-links" class="hidden small"></div>
+  <div id="actual" class="hidden"></div>
+  <details class="log"><summary>Journal de llama-server</summary><pre id="log"></pre></details>
+</section>
+
+<!-- ================================ 5. AGENTS -->
+<section class="card" id="sec-agents">
+  <h1><span class="num">5</span> Outils de code : Claude Code, Codex, OpenCode</h1>
+  <p class="lead">Ces agents parlent à un serveur de modèle par une API. llama-server expose nativement les trois dialectes qu'ils attendent (<code>/v1/messages</code> pour Claude Code, <code>/v1/responses</code> pour Codex, <code>/v1/chat/completions</code> pour OpenCode) : il suffit de leur dire où est le serveur, par des variables d'environnement au lancement — <b>aucun de vos fichiers de configuration n'est modifié</b>. Un agent a trois exigences : un modèle qui sait <b>appeler des outils</b> (lire, écrire, exécuter), un <b>contexte long</b> (le seul prompt système de Claude Code fait ~15 000 jetons, et tout l'historique est renvoyé à chaque tour) et un <b>traitement du prompt rapide</b> (c'est ce qui domine, plus que la génération).</p>
+  <div id="agents-check"></div>
+  <div class="row-inline">
+    <button class="btn" onclick="$('goal').value='agent'; recommendCfg()">Configurer les réglages pour un agent</button>
+    <button class="btn" id="btn-tooltest" onclick="testToolCall()">Tester l'appel d'outil</button>
+    <span id="tooltest-out" class="small"></span>
+  </div>
+  <div id="agents"></div>
+</section>
+
+<!-- ================================ CHAT -->
+<section class="card" id="sec-chat">
+  <h1>Chat de test</h1>
+  <p class="lead">Pour vérifier que ça répond, et mesurer la vitesse. Le serveur expose aussi une API compatible OpenAI : n'importe quel client (Open WebUI, Continue, votre code…) peut s'y connecter.</p>
+  <div id="chat" class="chat"></div>
+  <div class="composer">
+    <textarea id="chat-input" rows="2" placeholder="Votre message… (Entrée pour envoyer, Maj+Entrée = nouvelle ligne)" onkeydown="chatKey(event)"></textarea>
+    <button class="btn primary" id="chat-send" onclick="sendChat()">Envoyer</button>
+    <button class="btn" id="chat-stop" onclick="stopChat()" disabled title="interrompre la génération">■</button>
+    <button class="btn" onclick="clearChat()" title="nouvelle conversation">↺</button>
+  </div>
+  <div id="chat-stats" class="muted small"></div>
+</section>
+
+</main>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
