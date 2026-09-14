@@ -15,6 +15,8 @@ cd ialauncher
 python3 ialauncher.py          # ouvre http://127.0.0.1:8765 dans le navigateur
 ```
 
+![Modèles détectés et répartition VRAM / RAM / SSD pour Qwen 3.8 Flash Next](docs/memoire.png)
+
 Inspiré d'[ajean](https://github.com/nathaninline/ajean) (Go) pour l'organisation
 générale ; le code est indépendant.
 
@@ -35,6 +37,7 @@ générale ; le code est indépendant.
 - [Structure du code](#structure-du-code)
 - [API HTTP du launcher](#api-http-du-launcher)
 - [Désinstallation](#désinstallation)
+- [Licence](#licence)
 
 ## Pourquoi ce projet
 
@@ -118,8 +121,11 @@ chaque réglage.
    optimale » part de l'idéal (tout sur le GPU, cache KV en f16, contexte 32k) et ne
    sacrifie que le nécessaire, dans l'ordre le moins coûteux : cache KV en q8_0, contexte
    (jusqu'à 8k), experts MoE déportés en RAM (`--n-cpu-moe`), puis couches sur CPU
-   (`-ngl`), et en dernier recours tout sur CPU. Un champ « arguments supplémentaires »
+   (`-ngl`), et en dernier recours tout sur CPU. Un champ « options supplémentaires »
    permet de passer n'importe quelle option de `llama-server`.
+
+   ![Réglages : configuration proposée avec ses raisons, et explications dépliées](docs/reglages.png)
+
 4. **Où va la mémoire ?** — trois jauges (VRAM par carte, RAM, SSD) découpées en
    segments : poids sur GPU, cache KV, tampon de calcul, pilote, poids côté CPU, experts
    en RAM, cache de prompts, tenseurs lus à la demande, poids relus depuis le SSD faute
@@ -140,6 +146,9 @@ chaque réglage.
    passer par l'interface. Les requêtes de Claude Code passent par un relais du launcher
    (`/proxy/…`) qui remet en tête le message « system » qu'il glisse au milieu de la
    conversation — les gabarits Qwen le refusent sinon.
+
+   ![Outils de code : vérifications, variables d'environnement et commandes générées](docs/agents.png)
+
 7. **Chat** — flux avec raisonnement replié, tok/s. Sert à vérifier que le serveur
    répond ; ce n'est pas un client de chat complet.
 
@@ -322,3 +331,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 Supprimez le dossier du dépôt et le dossier de données (`~/.ialauncher` ou
 `%LOCALAPPDATA%\ialauncher`, ou `IALAUNCHER_HOME`). Rien d'autre n'est écrit sur la
 machine ; les modèles Ollama / LM Studio ne sont pas touchés.
+
+## Licence
+
+[MIT](LICENSE).
