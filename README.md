@@ -81,6 +81,17 @@ python3 ialauncher.py
 
 Aucun `pip install`. Sous Windows, `py ialauncher.py` ou `python ialauncher.py`.
 
+Pour **mettre à jour puis lancer** en une commande (Linux, macOS, WSL2) :
+
+```bash
+./start.sh                     # git pull, moteur llama.cpp si une release plus récente existe, lancement
+```
+
+`start.sh` accepte les mêmes options qu'`ialauncher.py`. Le moteur est réinstallé par la
+méthode d'origine (recompilation CUDA ou binaire officiel) et l'ancienne version reste
+dans `engines/`. Une mise à jour qui échoue (hors ligne, modifications locales…) est
+signalée et n'empêche pas le lancement.
+
 Options :
 
 ```
@@ -286,6 +297,7 @@ Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
 
 ```
 ialauncher.py          point d'entrée (argparse, lance web.serve)
+start.sh               mise à jour (git pull, moteur llama.cpp) puis lancement
 launcher/
   web.py               serveur HTTP (ThreadingHTTPServer), routes /api/*, relais /proxy/*
   hardware.py          inventaire GPU / RAM / CPU / disque (nvidia-smi, sysfs, /proc, sysctl, ctypes)
