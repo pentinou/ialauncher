@@ -178,7 +178,8 @@ class Handler(BaseHTTPRequestHandler):
             base = f"http://127.0.0.1:{port}"
             proxy = f"http://127.0.0.1:{self.server.server_address[1]}/proxy"
             return self._json({"installed": agents.installed(), "base_url": base, "alias": alias, "ctx": ctx,
-                               "specs": agents.specs(base, alias, ctx, proxy), "ready": st["state"] == "ready"})
+                               "specs": agents.specs(base, alias, ctx, proxy, st.get("vision", False)),
+                               "ready": st["state"] == "ready"})
         if path == "/api/paths":
             return self._json({"home": str(paths.home()), "models": str(paths.models_dir()),
                                "engines": str(paths.engines_dir()), "logs": str(paths.logs_dir())})
@@ -277,12 +278,14 @@ class Handler(BaseHTTPRequestHandler):
             base = SERVER.base_url() or f"http://127.0.0.1:{b.get('port', 8080)}"
             proxy = f"http://127.0.0.1:{self.server.server_address[1]}/proxy"
             return self._json(agents.write_scripts(base, st.get("alias") or b.get("alias", "modele"),
-                                                   int((st.get("cfg") or {}).get("ctx") or b.get("ctx") or 32768), proxy))
+                                                   int((st.get("cfg") or {}).get("ctx") or b.get("ctx") or 32768), proxy,
+                                                   st.get("vision", False)))
         if path == "/api/agents/open":
             st = SERVER.status()
             base = SERVER.base_url() or f"http://127.0.0.1:{b.get('port', 8080)}"
             proxy = f"http://127.0.0.1:{self.server.server_address[1]}/proxy"
-            sc = agents.write_scripts(base, st.get("alias") or "modele", int((st.get("cfg") or {}).get("ctx") or 32768), proxy)
+            sc = agents.write_scripts(base, st.get("alias") or "modele", int((st.get("cfg") or {}).get("ctx") or 32768), proxy,
+                                      st.get("vision", False))
             s = sc[b["tool"]]
             return self._json({"ok": True, "terminal": agents.open_terminal(s["sh"], s["cmd"], b.get("cwd"))})
         self.send_error(404)

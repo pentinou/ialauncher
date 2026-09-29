@@ -150,6 +150,7 @@ class Server:
         self.projected = None
         self.port_note = ""
         self.alias = ""
+        self.vision = False        # lancé avec un projecteur mmproj (le modèle lit les images)
         self.baseline = None       # VRAM/RAM libres juste avant le lancement (pour estimer sans se compter soi-même)
         self.lock = threading.Lock()
 
@@ -167,7 +168,9 @@ class Server:
             cfg["port"] = pick_port(wanted, cfg.get("host", "127.0.0.1"))
             self.port_note = f"port {wanted} occupé → {cfg['port']}" if cfg["port"] != wanted else ""
             self.alias = model_alias(model)
-            args = build_args(cfg, model["path"], mmproj or model.get("mmproj") or None, alias=self.alias)
+            mm = mmproj or model.get("mmproj") or None
+            self.vision = bool(mm)
+            args = build_args(cfg, model["path"], mm, alias=self.alias)
             args += ["-lv", "4", "--log-timestamps"]
             self.cmd = command_line(bin_path, args)
             self.log = ["$ " + self.cmd]
@@ -263,7 +266,8 @@ class Server:
                 "model": self.model, "cfg": self.cfg, "cmd": self.cmd,
                 "uptime": time.time() - self.started if alive else 0,
                 "mem": self.mem, "offloaded": self.offloaded, "projected": self.projected,
-                "rss": rss, "log": self.log[-120:], "port_note": self.port_note, "alias": self.alias}
+                "rss": rss, "log": self.log[-120:], "port_note": self.port_note, "alias": self.alias,
+                "vision": self.vision}
 
     def base_url(self):
         return f"http://{self.cfg.get('host', '127.0.0.1')}:{self.cfg.get('port', 8080)}" if self.cfg else ""

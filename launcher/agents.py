@@ -69,9 +69,10 @@ def normalize_anthropic(body):
     return json.dumps(d, ensure_ascii=False).encode("utf-8")
 
 
-def specs(base_url, alias, ctx, proxy_url=None):
+def specs(base_url, alias, ctx, proxy_url=None, vision=False):
     """Pour chaque outil : env, commande, explication. base_url sans /v1 ; proxy_url =
-    relais du launcher (normalise les requêtes de Claude Code)."""
+    relais du launcher (normalise les requêtes de Claude Code) ; vision = le serveur a
+    chargé un mmproj (OpenCode refuse les images tant qu'on ne le lui déclare pas)."""
     claude_env = {
         "ANTHROPIC_BASE_URL": proxy_url or base_url,
         "ANTHROPIC_API_KEY": "",
@@ -99,7 +100,9 @@ def specs(base_url, alias, ctx, proxy_url=None):
         "$schema": "https://opencode.ai/config.json",
         "provider": {"llamacpp": {"npm": "@ai-sdk/openai-compatible", "name": "llama.cpp (local)",
                                   "options": {"baseURL": base_url + "/v1"},
-                                  "models": {alias: {"name": alias, "limit": {"context": int(ctx), "output": 32768}}}}},
+                                  "models": {alias: {"name": alias, "limit": {"context": int(ctx), "output": 32768},
+                                                     "modalities": {"input": ["text", "image"] if vision else ["text"],
+                                                                    "output": ["text"]}}}}},
         "model": f"llamacpp/{alias}",
     }
     return {
@@ -120,17 +123,19 @@ def specs(base_url, alias, ctx, proxy_url=None):
             "name": "OpenCode", "env": {"OPENCODE_CONFIG_CONTENT": json.dumps(opencode_cfg, ensure_ascii=False)},
             "cmd": f"opencode --model {shlex.quote('llamacpp/' + alias)}",
             "how": "Configuration passée inline (OPENCODE_CONFIG_CONTENT) : un fournisseur OpenAI-compatible sur "
-                   "/v1/chat/completions. Votre opencode.json n'est pas touché.",
+                   "/v1/chat/completions, avec les modalités du modèle (images acceptées si un mmproj est chargé ; "
+                   "sans cette déclaration, OpenCode remplace toute image par « this model does not support image "
+                   "input »). Votre opencode.json n'est pas touché.",
         },
     }
 
 
-def write_scripts(base_url, alias, ctx, proxy_url=None):
+def write_scripts(base_url, alias, ctx, proxy_url=None, vision=False):
     """Un script par outil dans ~/.ialauncher/agents/ : le lancer ouvre l'outil branché
     sur le serveur local. .sh (Linux/macOS/WSL) et .cmd (Windows)."""
     d = paths.sub("agents")
     out = {}
-    for key, s in specs(base_url, alias, ctx, proxy_url).items():
+    for key, s in specs(base_url, alias, ctx, proxy_url, vision).items():
         sh = d / f"{key}-local.sh"
         sh.write_text("#!/usr/bin/env bash\n# Généré par IA Launcher — lance " + s["name"] +
                       " sur le serveur llama.cpp local\n" + _env_export(s["env"], "sh") + "\nexec " + s["cmd"] + ' "$@"\n')

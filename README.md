@@ -261,7 +261,10 @@ Ce que fait chaque script généré :
   aligné sur le contexte.
 - **Codex** : `codex -c model_provider=… -c model_providers.<x>.base_url=… -c
   model_providers.<x>.wire_api="responses"` + `OPENAI_API_KEY` factice.
-- **OpenCode** : configuration inline via `OPENCODE_CONFIG_CONTENT`.
+- **OpenCode** : configuration inline via `OPENCODE_CONFIG_CONTENT`, avec les
+  `modalities` du modèle (`image` ajouté quand un mmproj est chargé : sans cette
+  déclaration, OpenCode remplace chaque image jointe par « this model does not support
+  image input » et le modèle dit ne pas pouvoir lire les images).
 
 Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
 
