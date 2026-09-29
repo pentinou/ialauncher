@@ -768,7 +768,7 @@ async function deletePreset(id) { if (!confirm('Supprimer ce preset ?')) return;
     setInterval(liveTick, 3000);
     // reprend les tâches en cours (ex. compilation lancée avant un rechargement de page)
     const jobs = await api('/api/jobs');
-    for (const j of jobs.filter(j => j.state === 'running')) watchJob(j.id, j.kind === 'engine' ? 'engine-job' : 'dl-job', j.kind === 'engine' ? refreshEngine : refreshModels);
+    for (const j of jobs.filter(j => j.state === 'running' && ['engine', 'download', 'analyze'].includes(j.kind))) watchJob(j.id, j.kind === 'engine' ? 'engine-job' : 'dl-job', j.kind === 'engine' ? refreshEngine : refreshModels);
     // lien direct : ?select=<id de modèle local> ou ?repo=<dépôt HF>
     const q = new URLSearchParams(location.search);
     if (q.get('select')) await selectLocal(q.get('select'));

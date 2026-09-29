@@ -14,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import (hardware, engine, jobs, models, catalog, estimate, recommend, presets, paths, agents)
+from . import (hardware, engine, jobs, models, catalog, estimate, recommend, presets, paths, agents,
+               sdcpp, music, gen_catalog, services, storage, civitai)
 from .server import SERVER
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -180,6 +181,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"installed": agents.installed(), "base_url": base, "alias": alias, "ctx": ctx,
                                "specs": agents.specs(base, alias, ctx, proxy, st.get("vision", False)),
                                "ready": st["state"] == "ready"})
+        if path.startswith("/outputs/"):
+            return self._output(path[len("/outputs/"):])
+        if path == "/api/gen/status":
+            return self._json({"sd": sdcpp.status(), "music": music.status()})
+        if path == "/api/gen/models":
+            return self._json({"models": sdcpp.models(q.get("kind", "image")), "tags": gen_catalog.TAG_HELP,
+                               "webui": [str(w) for w in sdcpp.webui_installs()]})
+        if path == "/api/gen/loras":
+            return self._json(sdcpp.loras(q.get("model", "")))
+        if path == "/api/gen/outputs":
+            return self._json(sdcpp.outputs(q.get("kind", "image")))
+        if path == "/api/storage":
+            return self._json(storage.scan())
+        if path == "/api/civitai/search":
+            return self._json(civitai.search(q.get("q", ""), q.get("type", "Checkpoint"), q.get("family", ""),
+                                             q.get("sort", "Most Downloaded"), q.get("nsfw") == "1", q.get("cursor", "")))
         if path == "/api/paths":
             return self._json({"home": str(paths.home()), "models": str(paths.models_dir()),
                                "engines": str(paths.engines_dir()), "logs": str(paths.logs_dir())})
@@ -262,6 +279,7 @@ class Handler(BaseHTTPRequestHandler):
             m = models.find(b["model"]["id"]) if b.get("model", {}).get("id") else None
             if not m:
                 return self._json({"error": "modèle introuvable (il doit être sur le disque)"}, 400)
+            services.claim_gpu("llama")
             SERVER.start(b["cfg"], m, b.get("mmproj"))
             return self._json(SERVER.status())
         if path == "/api/server/stop":
@@ -269,6 +287,51 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(SERVER.status())
         if path == "/api/chat":
             return self._chat(b)
+        # ---- image / vidéo / musique
+        if path == "/api/gen/engine/install":
+            if jobs.running("sd-engine"):
+                return self._json({"error": "une installation est déjà en cours"}, 409)
+            j = jobs.start("sd-engine", f"Installation de stable-diffusion.cpp — {b.get('label', '')}",
+                           lambda job: sdcpp.install(job, b["method"], b.get("variant", ""), b.get("label", "")))
+            return self._json({"job": j.to_dict()})
+        if path == "/api/gen/download":
+            e = gen_catalog.find(b["id"])
+            if not e:
+                return self._json({"error": "modèle inconnu"}, 404)
+            j = jobs.start("gen-download", f"Téléchargement — {e['name']}", lambda job: sdcpp.download_model(job, b["id"]))
+            return self._json({"job": j.to_dict()})
+        if path == "/api/gen/run":
+            if jobs.running("gen"):
+                return self._json({"error": "une génération est déjà en cours"}, 409)
+            fn = music.generate if b.get("kind") == "music" else sdcpp.generate
+            labels = {"image": "Image", "video": "Vidéo", "music": "Musique"}
+            j = jobs.start("gen", f"{labels.get(b.get('kind'), 'Génération')} — {b.get('prompt', '')[:50]}", lambda job: fn(job, b))
+            return self._json({"job": j.to_dict()})
+        if path == "/api/gen/stop":
+            (services.MUSIC if b.get("service") == "music" else services.SD).stop()
+            return self._json({"ok": True})
+        if path == "/api/gen/dirs":
+            if not os.path.isdir(b.get("path", "")):
+                return self._json({"error": "dossier introuvable"}, 400)
+            sdcpp.add_dir(b["path"])
+            return self._json({"ok": True})
+        if path == "/api/gen/outputs/delete":
+            sdcpp.delete_output(b["kind"], b["name"])
+            return self._json({"ok": True})
+        if path == "/api/storage/delete":
+            storage.delete(b["id"])
+            return self._json({"ok": True})
+        if path == "/api/civitai/token":
+            civitai.set_token(b.get("token", ""))
+            return self._json({"ok": True})
+        if path == "/api/civitai/download":
+            j = jobs.start("gen-download", f"Civitai — {b['model']['name']}", lambda job: civitai.download_file(job, b["type"], b))
+            return self._json({"job": j.to_dict()})
+        if path == "/api/music/install":
+            if jobs.running("music-install"):
+                return self._json({"error": "une installation est déjà en cours"}, 409)
+            j = jobs.start("music-install", "Installation d'ACE-Step", music.install)
+            return self._json({"job": j.to_dict()})
         if path == "/api/agents/test":
             if SERVER.state != "ready":
                 return self._json({"ok": False, "detail": "le serveur n'est pas prêt"})
@@ -289,6 +352,41 @@ class Handler(BaseHTTPRequestHandler):
             s = sc[b["tool"]]
             return self._json({"ok": True, "terminal": agents.open_terminal(s["sh"], s["cmd"], b.get("cwd"))})
         self.send_error(404)
+
+    def _output(self, rel):
+        """Fichier généré (image, vidéo, musique), avec les requêtes « Range » dont les
+        lecteurs audio/vidéo des navigateurs ont besoin pour se déplacer dans le fichier."""
+        root = paths.outputs_dir().resolve()
+        p = (root / rel).resolve()
+        if root not in p.parents or not p.is_file():
+            self.send_error(404)
+            return
+        size = p.stat().st_size
+        start, end = 0, size - 1
+        rng = self.headers.get("Range", "")
+        if rng.startswith("bytes="):
+            a, _, z = rng[6:].partition("-")
+            start = int(a) if a else max(0, size - int(z))
+            end = int(z) if a and z else size - 1
+        self.send_response(206 if rng else 200)
+        self.send_header("Content-Type", mimetypes.guess_type(str(p))[0] or "application/octet-stream")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with open(p, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = f.read(min(left, 1 << 20))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     # ---------------------------------------------------------------- relais agents
     def _proxy(self, method, path, body):
@@ -435,6 +533,9 @@ def serve(port=8765, open_browser=True):
     orphan = kill_orphan()
     if orphan:
         print(f"un llama-server d'une session précédente (pid {orphan}) a été arrêté", flush=True)
+    for s in (services.SD, services.MUSIC):
+        if s.kill_orphan():
+            print(f"un {s.name} d'une session précédente a été arrêté", flush=True)
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     httpd.daemon_threads = True
     url = f"http://127.0.0.1:{port}"
@@ -452,3 +553,5 @@ def serve(port=8765, open_browser=True):
         pass
     finally:
         SERVER.stop()
+        services.SD.stop()
+        services.MUSIC.stop()

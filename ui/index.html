@@ -8,7 +8,14 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand">IA <b>Launcher</b> <span class="muted">· llama.cpp</span></div>
+  <div class="brand">IA <b>Launcher</b></div>
+  <nav class="modes">
+    <button class="mode active" data-mode="text" onclick="showMode('text')">💬 Texte</button>
+    <button class="mode" data-mode="image" onclick="showMode('image')">🖼 Image</button>
+    <button class="mode" data-mode="video" onclick="showMode('video')">🎬 Vidéo</button>
+    <button class="mode" data-mode="music" onclick="showMode('music')">🎵 Musique</button>
+    <button class="mode" data-mode="storage" onclick="showMode('storage')">💾 Stockage</button>
+  </nav>
   <div class="pills">
     <span class="pill" id="pill-engine">moteur…</span>
     <span class="pill" id="pill-server">serveur arrêté</span>
@@ -27,6 +34,7 @@
 </aside>
 
 <main class="main">
+<div id="mode-text">
 
 <!-- ================================ 1. MOTEUR -->
 <section class="card" id="sec-engine">
@@ -137,9 +145,15 @@
   <div id="chat-stats" class="muted small"></div>
 </section>
 
+</div>
+<div id="mode-image" class="hidden"></div>
+<div id="mode-video" class="hidden"></div>
+<div id="mode-music" class="hidden"></div>
+<div id="mode-storage" class="hidden"></div>
 </main>
 </div>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>
+<script src="/static/gen.js"></script>
 </body>
 </html>

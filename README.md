@@ -6,6 +6,11 @@ changez les réglages, propose une **configuration optimale pour votre machine**
 le serveur — avec un petit chat pour vérifier que tout répond, et de quoi brancher
 **Claude Code, Codex ou OpenCode** sur le modèle local.
 
+Trois autres onglets génèrent des **images**, des **vidéos** et de la **musique** : le
+launcher installe les moteurs ([stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+et [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)), télécharge les modèles, et
+tout se règle dans son interface — pas de ComfyUI, pas de nœuds.
+
 Python 3.10+ **sans aucune dépendance** (bibliothèque standard uniquement). Interface web
 vanilla (HTML/JS/CSS), servie uniquement sur `127.0.0.1`. Linux, WSL2, Windows, macOS.
 
@@ -27,6 +32,8 @@ générale ; le code est indépendant.
 - [Installation et démarrage](#installation-et-démarrage)
 - [Ce que fait chaque étape](#ce-que-fait-chaque-étape)
 - [Utiliser le modèle depuis d'autres applications](#utiliser-le-modèle-depuis-dautres-applications)
+- [Image, vidéo, musique](#image-vidéo-musique)
+- [Espace disque](#espace-disque)
 - [Configurations enregistrées (presets)](#configurations-enregistrées-presets)
 - [Où sont les fichiers](#où-sont-les-fichiers)
 - [Précision de l'estimation](#précision-de-lestimation)
@@ -183,6 +190,120 @@ Par défaut le serveur n'écoute que sur `127.0.0.1`. Pour l'exposer sur le rés
 ajoutez `--host 0.0.0.0` (et de préférence `--api-key …`) dans les « options
 supplémentaires » des réglages — sans clé, n'importe qui sur le réseau peut l'utiliser.
 
+## Image, vidéo, musique
+
+Les onglets **Image**, **Vidéo** et **Musique** suivent la même idée que l'onglet Texte :
+le launcher installe un moteur, télécharge les modèles et le pilote par son API locale.
+Le prompt et tous les réglages se font dans le launcher, jamais dans un autre programme.
+
+**Une seule carte graphique pour tout.** Un modèle de diffusion ou de musique ne tient
+pas dans la VRAM à côté d'un LLM : lancer une génération arrête `llama-server` (après
+confirmation) et l'autre générateur ; lancer le serveur de texte arrête les générateurs.
+Le bouton « libérer la carte graphique » décharge le modèle d'image / de musique.
+
+### Image et vidéo : stable-diffusion.cpp
+
+Le « llama.cpp de la diffusion » : même bibliothèque ggml, fichiers GGUF quantifiés,
+binaire compilé pour la carte, serveur HTTP (`sd-server`). Installation comme pour
+llama.cpp : compilation CUDA sous Linux + NVIDIA (≈ 15 min, il n'existe pas de binaire
+CUDA Linux officiel), binaires officiels ailleurs (CUDA Windows, ROCm, Vulkan, Metal).
+Le launcher lance `sd-server` sur le modèle choisi et lui soumet les générations par son
+API native asynchrone (`/sdcpp/v1/img_gen`, `/sdcpp/v1/vid_gen`) ; le modèle reste chargé
+entre deux générations, changer de modèle relance le serveur.
+
+Catalogue (un modèle = plusieurs fichiers, téléchargés ensemble) :
+
+| Modèle | Usage | Fichiers | Licence |
+|---|---|---|---|
+| Z-Image Turbo | image, 8 étapes, photo, texte dans l'image | 11,2 Go | Apache 2.0 |
+| FLUX.2 klein 9B | image, 4 étapes, retouche par image de référence | 19,0 Go | FLUX Non-Commercial |
+| Qwen-Image 2.1 | image, qualité, texte long, retouche | 18,2 Go | Qwen Research |
+| Anima | image, illustration anime, très léger | 3,2 Go | CircleStone Non-Commercial |
+| Krea 2 Turbo | image, 8 étapes, photo | 18,2 Go | Krea 2 Community |
+| Wan 2.2 TI2V 5B | vidéo 24 i/s, texte→vidéo et image→vidéo | 12,8 Go | Apache 2.0 |
+| Wan 2.2 T2V A14B | vidéo 16 i/s, deux experts (bruit fort / faible) | 25,6 Go | Apache 2.0 |
+| MiniMax-H3 | vidéo **avec son**, image de départ / de fin | 35,5 Go | MiniMax H3 Community ⚠ |
+
+⚠ **MiniMax-H3** : la licence exclut l'usage dans l'**Union européenne**, au Royaume-Uni,
+aux États-Unis et en Corée du Sud sans autorisation écrite de MiniMax (formulaire sur
+[huggingface.co/MiniMaxAI/MiniMax-H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)). Le
+launcher le rappelle et demande confirmation avant le téléchargement. Sur une carte de
+24 Go, il tourne en déchargeant ses poids en RAM : c'est lent.
+
+**Stable Diffusion WebUI n'est pas nécessaire** : le moteur est stable-diffusion.cpp, que
+le launcher installe lui-même. Si une WebUI ou Forge est présente, ses fichiers sont
+simplement réutilisés :
+
+**Vos checkpoints Stable Diffusion WebUI / Forge** (SD 1.5, SDXL, Pony, Illustrious,
+SD 3.5 tout-en-un) sont trouvés automatiquement — dossiers `*webui*` / `*forge*` du
+dossier personnel et, sous WSL, des lecteurs Windows (`/mnt/c`, `/mnt/d`…) et des profils
+utilisateurs — et utilisés en place. L'architecture est lue dans l'en-tête safetensors.
+Les **LoRA** sont réunis dans `diffusion/loras/` : ceux venus de Civitai, plus des liens
+symboliques vers ceux de la WebUI (`webui-<nom>/`), si bien que tous servent à tous les
+modèles de la bonne famille. La famille d'un LoRA (SD 1.5, SDXL, Z-Image…) est lue dans
+ses métadonnées ; l'interface met en avant ceux qui correspondent au modèle choisi et
+ajoute leurs mots déclencheurs. La syntaxe `<lora:nom:0.8>` dans le prompt fonctionne
+comme dans la WebUI (le launcher la traduit pour l'API de sd-server, qui refuse les
+balises).
+
+**Civitai.** L'onglet Image (et Vidéo, pour les LoRA) cherche sur
+[civitai.com](https://civitai.com/models) : checkpoints ou LoRA, par famille, popularité
+ou date, avec ou sans contenu adulte. Seules les familles que stable-diffusion.cpp sait
+charger sont proposées : SD 1.5, SDXL / Pony / Illustrious / NoobAI (checkpoints
+tout-en-un), Z-Image, FLUX.2 klein 9B, Qwen-Image 2.1, Anima, Krea 2 (le checkpoint
+Civitai ne contient que le modèle de diffusion : l'encodeur de texte et le VAE viennent
+du modèle de base du catalogue, à télécharger une fois), et les LoRA Wan 2.2 et
+MiniMax-H3 pour la vidéo. Civitai exige une **clé API** (compte gratuit,
+civitai.com/user/account → API Keys) pour tout téléchargement ; elle est gardée dans
+`config.json`. Les fichiers au format pickle (`.ckpt`, `.pt`), qui peuvent exécuter du
+code à l'ouverture, ne sont pas proposés. Pour SDXL, le launcher télécharge une
+fois le VAE corrigé `sdxl-vae-fp16-fix` (0,33 Go), sans quoi le VAE d'origine peut
+déborder en fp16 et donner des images noires. Réglages disponibles : taille (formats
+prédéfinis), étapes, CFG, sampler, planning, graine, lot, clip skip, hires fix,
+img2img, image de référence (retouche), image de départ / de fin (vidéo), durée et
+cadence (vidéo), placement des poids (auto / RAM / disque), VAE par tuiles.
+
+Mémoire : `sd-server` place lui-même les poids (`--auto-fit` : VRAM, puis RAM, puis
+disque) ; « RAM » force `--offload-to-cpu`, « disque » `--params-backend disk` (le moins
+de RAM, le plus lent).
+
+### Musique : ACE-Step 1.5
+
+Chansons avec paroles (50+ langues), de 10 s à 10 min, licence MIT. C'est un programme
+Python : le launcher clone le dépôt dans `apps/ACE-Step-1.5`, installe
+[uv](https://docs.astral.sh/uv/) s'il manque, puis `uv sync` crée l'environnement
+(Python 3.12, PyTorch CUDA…, ≈ 6 Go) — rien n'est installé dans le Python du système.
+Les poids (10 Go pour le modèle de base, 20 Go de plus pour un modèle XL) sont
+téléchargés par le launcher lui-même avant le premier lancement : le téléchargement
+intégré d'ACE-Step (huggingface_hub) s'est figé sans erreur lors des essais. Ensuite le
+launcher démarre le serveur REST `acestep-api` et lui soumet style, paroles, langue,
+durée, tempo, tonalité, mesure, étapes et graine.
+
+Mesuré sur RTX 3090 (WSL2, Ryzen 3950X), temps de calcul hors premier chargement :
+
+| Génération | Temps |
+|---|---|
+| Z-Image Turbo, 1024×1024, 8 étapes | ≈ 10 s par image (2 images en 20 s) ; 23 s à froid |
+| SDXL (checkpoint Pony de la WebUI) + LoRA, 1024×1024, 25 étapes | 47 s à froid, checkpoint lu depuis `D:` |
+| Anima, 1024×1024, 30 étapes | 35 s à froid |
+| Krea 2 Turbo, 1024×1024, 8 étapes | 26 s à froid |
+| Wan 2.2 TI2V 5B, 832×480, 49 images (2 s), 30 étapes | ≈ 3 min 10 s |
+| ACE-Step Turbo + LM 1,7B, chanson d'1 min, 2 variantes | 13 s ; ≈ 1 min 50 au premier lancement (chargement du LM) |
+
+Tout ce qui est généré est rangé dans `outputs/image`, `outputs/video` et
+`outputs/music`, avec un `.json` des réglages à côté : la galerie permet de revoir un
+résultat et de reprendre ses réglages (graine comprise).
+
+## Espace disque
+
+L'onglet **Stockage** mesure tout ce qu'occupe le launcher, groupé : modèles de texte,
+modèles d'image / vidéo (un fichier partagé entre deux modèles n'est compté qu'une fois
+et n'est supprimé qu'avec le dernier qui l'utilise), moteurs (les versions en service ne
+sont pas supprimables), ACE-Step (programme et poids), créations, cache. Il affiche aussi,
+sans permettre de les supprimer, les modèles lus en place (WebUI, Ollama, LM Studio), et
+le cache de `uv` (partagé avec vos autres projets uv, vidable). Chaque téléchargement
+vérifie d'abord l'espace libre.
+
 ## Configurations enregistrées (presets)
 
 Un preset = un modèle + ses réglages, sauvegardé dans `presets/<nom>.json`. Enregistrez
@@ -195,12 +316,16 @@ peut les copier d'une machine à l'autre (les chemins de modèles doivent existe
 la variable `IALAUNCHER_HOME` :
 
 ```
-engines/   binaires llama.cpp (un sous-dossier par version/variante, fichier VERSION)
+engines/   binaires llama.cpp et stable-diffusion.cpp (un sous-dossier par version/variante, fichier VERSION)
 models/    .gguf téléchargés par le launcher (+ mmproj, brouillons MTP)
+diffusion/ modèles d'image et de vidéo (un sous-dossier par dépôt Hugging Face),
+           checkpoints/ et loras/ (Civitai, avec un .json de métadonnées ; loras/webui-*/ = liens vers la WebUI)
+apps/      ACE-Step-1.5 (code, environnement Python .venv, checkpoints/)
+outputs/   image/, video/, music/ : les générations et leurs réglages (.json)
 presets/   configurations enregistrées (JSON)
 agents/    scripts générés pour Claude Code / Codex / OpenCode
 cache/     en-têtes GGUF déjà lus, catalogue Hugging Face, sources llama.cpp
-logs/      llama-server.log (sortie du dernier serveur lancé)
+logs/      llama-server.log, sd-server.log, ace-step.log (sortie du dernier lancement)
 config.json   moteur choisi, dossiers de modèles ajoutés
 ```
 
@@ -293,7 +418,13 @@ Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
 - Détection GPU : NVIDIA via `nvidia-smi`, AMD via sysfs (Linux), Apple via la mémoire
   unifiée. Un GPU Intel ou AMD sous Windows n'est pas listé (le moteur Vulkan l'utilise
   quand même, mais sans jauge VRAM).
-- Un seul `llama-server` à la fois.
+- Un seul `llama-server` à la fois, et un seul modèle sur la carte graphique à la fois
+  (texte, image / vidéo ou musique).
+- Image / vidéo : ControlNet seulement pour SD 1.5 (limite de stable-diffusion.cpp) ; pas
+  d'inpainting par masque dans l'interface. Les checkpoints FLUX « tout-en-un » ne sont
+  pas pris en charge (utilisez le catalogue).
+- Musique : l'API d'ACE-Step n'a pas d'annulation ; une génération annulée se termine
+  en arrière-plan.
 - Interface et explications en français uniquement.
 
 ## Structure du code
@@ -317,8 +448,15 @@ launcher/
   jobs.py              tâches longues (téléchargement, compilation) avec progression
   presets.py           presets JSON
   paths.py             dossiers de données (IALAUNCHER_HOME)
+  services.py          serveurs de génération en arrière-plan (sd-server, ACE-Step), carte graphique partagée
+  sdcpp.py             image / vidéo : installation de stable-diffusion.cpp, modèles, checkpoints WebUI, génération
+  gen_catalog.py       catalogue des modèles d'image et de vidéo (fichiers, réglages conseillés)
+  music.py             musique : installation d'ACE-Step (uv), poids, génération
+  civitai.py           recherche et téléchargement de checkpoints / LoRA sur Civitai
+  storage.py           espace disque : mesure et suppression
 ui/
   index.html, app.js, style.css   interface, sans framework ni build
+  gen.js               onglets Image, Vidéo, Musique
 ```
 
 Pour vérifier l'inventaire matériel seul : `python3 -m launcher.hardware`.
@@ -340,6 +478,12 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | POST | `/api/chat` | chat de test (flux) |
 | GET/POST | `/api/agents`, `/api/agents/test`, `/api/agents/scripts`, `/api/agents/open` | outils de code |
 | * | `/proxy/…` | relais vers llama-server (normalise les messages Anthropic) |
+| GET | `/api/gen/status`, `/api/gen/models?kind=image\|video`, `/api/gen/loras?model=`, `/api/gen/outputs?kind=` | image / vidéo / musique : état, modèles, LoRA, galerie |
+| POST | `/api/gen/engine/install`, `/api/gen/download`, `/api/music/install` | installation des moteurs et modèles |
+| POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie |
+| GET/POST | `/api/storage`, `/api/storage/delete` | espace disque |
+| GET/POST | `/api/civitai/search`, `/api/civitai/token`, `/api/civitai/download` | Civitai |
+| GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation
 
