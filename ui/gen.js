@@ -327,6 +327,19 @@ async function civDownload(kind, i) {
   } catch (e) { toast(e.message); }
 }
 
+// ------------------------------------------------------------------ tout décharger
+async function unloadAll() {
+  const busy = Object.keys(JOBS).length;
+  if (!confirm('Décharger tous les modèles (texte, image, vidéo, musique) et libérer la VRAM et la RAM ?' +
+    (busy ? '\nUne tâche est en cours : une génération en cours sera annulée.' : ''))) return;
+  try {
+    const r = await api('/api/unload', {});
+    toast(r.stopped.length ? 'Déchargé : ' + r.stopped.join(', ') : 'Aucun modèle n’était chargé');
+  } catch (e) { toast(e.message); return; }
+  pollServer(); refreshGenStatus();
+  setTimeout(liveTick, 1500);   // la VRAM se libère une fois les processus terminés
+}
+
 // ------------------------------------------------------------------ stockage
 async function loadStorage() {
   const root = $('mode-storage');

@@ -285,6 +285,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/server/stop":
             SERVER.stop()
             return self._json(SERVER.status())
+        if path == "/api/unload":
+            # tout décharger : les générations en cours sont annulées, sinon elles relanceraient leur serveur
+            for j in jobs.running("gen"):
+                j.cancel_requested = True
+            return self._json({"stopped": services.claim_gpu("aucun")})
         if path == "/api/chat":
             return self._chat(b)
         # ---- image / vidéo / musique

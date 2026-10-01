@@ -205,7 +205,7 @@ MUSIC = Service("ace-step", "acestep")
 
 def claim_gpu(owner):
     """Libère la carte graphique pour `owner` : arrête llama-server et l'autre service
-    de génération. Renvoie la liste de ce qui a été arrêté."""
+    de génération (owner inconnu, ex. "aucun" : arrête tout). Renvoie ce qui a été arrêté."""
     from .server import SERVER
     stopped = []
     if owner != "llama" and SERVER.proc is not None and SERVER.proc.poll() is None:

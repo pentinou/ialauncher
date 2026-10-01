@@ -199,7 +199,9 @@ Le prompt et tous les réglages se font dans le launcher, jamais dans un autre p
 **Une seule carte graphique pour tout.** Un modèle de diffusion ou de musique ne tient
 pas dans la VRAM à côté d'un LLM : lancer une génération arrête `llama-server` (après
 confirmation) et l'autre générateur ; lancer le serveur de texte arrête les générateurs.
-Le bouton « libérer la carte graphique » décharge le modèle d'image / de musique.
+Le bouton « libérer la carte graphique » décharge le modèle d'image / de musique ; le
+bouton **⏏ tout décharger** de l'en-tête arrête tous les serveurs (texte, image / vidéo,
+musique) et rend la VRAM et la RAM qu'ils occupaient (une génération en cours est annulée).
 
 ### Image et vidéo : stable-diffusion.cpp
 
