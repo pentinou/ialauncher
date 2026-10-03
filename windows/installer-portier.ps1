@@ -7,7 +7,7 @@
 param(
     [string]$Distro = "Ubuntu-24.04",
     [string]$Utilisateur = "pentinou",          # utilisateur Linux dans WSL
-    [string]$Dossier = "/home/pentinou/ialauncher"
+    [string]$Dossier = "/home/pentinou/ialauncher-portier"   # dossier de travail git sur la branche yunohost
 )
 
 $nom = "IA Launcher - portier"

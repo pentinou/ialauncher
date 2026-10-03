@@ -22,4 +22,6 @@ WSL (mode réseau `mirrored`) n'ouvre le port 8765 qu'à l'adresse du serveur Yu
       -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8765 `
       -RemoteAddresses 192.168.1.179 -Action Allow
 
-Mettre à jour : travailler sur `main`, puis `git checkout yunohost && git merge main`.
+Le portier tourne depuis un dossier de travail git dédié, toujours sur cette branche
+(`git worktree add ~/ialauncher-portier yunohost`) : on peut développer sur `main` dans
+`~/ialauncher` sans le perturber. Mettre à jour : `cd ~/ialauncher-portier && git merge main`.
