@@ -21,6 +21,25 @@ from .server import SERVER
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 _HW = {"data": None, "at": 0}
 _LOCK = threading.Lock()
+# Dernière requête reçue (hors /api/activity) : le portier à la demande (ondemand.py)
+# s'en sert pour savoir si quelqu'un utilise encore le launcher avant de l'arrêter.
+_ACTIVITE = {"derniere": time.time()}
+
+
+def activite():
+    """Ce qui empêche d'arrêter le launcher : tâches en cours (téléchargement,
+    compilation, génération) et requêtes que llama-server est en train de traiter
+    (agents qui lui parlent directement, sans passer par le launcher)."""
+    taches = [j.label for j in jobs.running()]
+    llm = 0
+    if SERVER.state == "ready":
+        try:
+            with urllib.request.urlopen(SERVER.base_url() + "/slots", timeout=3) as r:
+                llm = sum(1 for s in json.loads(r.read()) if s.get("is_processing"))
+        except Exception:   # /slots désactivé ou serveur occupé à démarrer : on ne bloque pas
+            pass
+    return {"derniere_requete": _ACTIVITE["derniere"], "taches": taches, "llm_en_cours": llm,
+            "occupe": bool(taches or llm)}
 
 
 def hw_inventory(max_age=30):
@@ -125,6 +144,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        if u.path != "/api/activity":
+            _ACTIVITE["derniere"] = time.time()
         try:
             self._get(u.path, q)
         except Exception as e:  # noqa: BLE001
@@ -140,6 +161,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._file(path[len("/static/"):])
         if path == "/api/hardware":
             return self._json(hw_inventory(max_age=0 if q.get("refresh") else 30))
+        if path == "/api/activity":
+            return self._json(activite())
         if path == "/api/live":
             return self._json(hardware.live())
         if path == "/api/engine":
@@ -205,6 +228,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- POST
     def do_POST(self):
         u = urlparse(self.path)
+        _ACTIVITE["derniere"] = time.time()
         try:
             if u.path.startswith("/proxy/"):
                 n = int(self.headers.get("Content-Length") or 0)
