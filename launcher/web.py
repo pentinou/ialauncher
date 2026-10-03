@@ -427,6 +427,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header(k, resp.headers[k])
         if "text/event-stream" in ctype:
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")   # derrière nginx : pas de mise en tampon du flux
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             try:
@@ -461,6 +462,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
         try:
@@ -528,9 +530,9 @@ def _open_browser(url):
     webbrowser.open(url)
 
 
-def serve(port=8765, open_browser=True):
+def serve(port=8765, open_browser=True, host="127.0.0.1"):
     from .server import pick_port
-    free = pick_port(port)
+    free = pick_port(port, host)
     if free != port:
         print(f"port {port} occupé (une autre instance ?) → {free}", flush=True)
     port = free
@@ -541,10 +543,13 @@ def serve(port=8765, open_browser=True):
     for s in (services.SD, services.MUSIC):
         if s.kill_orphan():
             print(f"un {s.name} d'une session précédente a été arrêté", flush=True)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
     url = f"http://127.0.0.1:{port}"
     print(f"IA Launcher : {url}   (Ctrl+C pour quitter)", flush=True)
+    if host != "127.0.0.1":
+        print(f"⚠ écoute sur {host} : le launcher n'a PAS d'authentification ; limitez l'accès à ce port "
+              "(pare-feu) au seul proxy qui en a une, ex. le SSO YunoHost", flush=True)
     if open_browser:
         threading.Timer(0.8, lambda: _open_browser(url)).start()
     import signal

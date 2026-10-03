@@ -104,6 +104,8 @@ Options :
 ```
 python3 ialauncher.py --port 9000     # port de l'interface (défaut 8765 ; si occupé, le suivant libre)
 python3 ialauncher.py --no-browser    # ne pas ouvrir le navigateur
+python3 ialauncher.py --host 0.0.0.0  # écouter sur le réseau (défaut 127.0.0.1) — SANS authentification :
+                                      # à réserver à un proxy qui en a une (pare-feu limité à son adresse)
 IALAUNCHER_HOME=/data/ia python3 ialauncher.py   # changer le dossier de données (voir plus bas)
 ```
 
