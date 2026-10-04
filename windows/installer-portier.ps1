@@ -7,13 +7,15 @@
 param(
     [string]$Distro = "Ubuntu-24.04",
     [string]$Utilisateur = "pentinou",          # utilisateur Linux dans WSL
-    [string]$Dossier = "/home/pentinou/ialauncher-portier"   # dossier de travail git sur la branche yunohost
+    [string]$Dossier = "/home/pentinou/ialauncher-portier",  # dossier de travail git sur la branche yunohost
+    # adresses acceptées par le portier : le serveur YunoHost et le PC lui-même
+    [string]$Autorisees = "192.168.1.179,127.0.0.1,192.168.1.20"
 )
 
 $nom = "IA Launcher - portier"
 # Le portier tourne au premier plan : tant qu'il vit, WSL reste allumé.
 $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wsl.exe" `
-    -Argument "-d $Distro -u $Utilisateur --cd $Dossier -- python3 ondemand.py"
+    -Argument "-d $Distro -u $Utilisateur --cd $Dossier -- python3 ondemand.py --allow $Autorisees"
 $declencheurs = @(
     (New-ScheduledTaskTrigger -AtStartup),
     (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)   # au cas où le démarrage sans session échoue

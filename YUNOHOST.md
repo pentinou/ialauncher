@@ -15,12 +15,14 @@ YunoHost, à la demande :
   `ia.gingerfox.run` vers `http://192.168.1.20:8765` derrière le SSO, sans transmettre
   d'identifiants, et propose « Réveiller le PC » (Wake-on-LAN) quand le PC ne répond pas.
 
-Sécurité : ni le portier ni le launcher n'ont d'authentification. Le pare-feu Hyper-V de
-WSL (mode réseau `mirrored`) n'ouvre le port 8765 qu'à l'adresse du serveur YunoHost :
+Sécurité : ni le portier ni le launcher n'ont d'authentification. Le portier n'accepte
+que les adresses de `--allow` (le serveur YunoHost et le PC lui-même) et répond 403 aux
+autres. Le pare-feu Hyper-V de WSL (mode réseau `mirrored`) doit laisser entrer le port
+8765 : filtrer l'adresse source y bloque aussi les connexions de Windows vers WSL
+(constaté), d'où le filtrage dans le portier.
 
     New-NetFirewallHyperVRule -Name "WSL-projets-YunoHost" -Direction Inbound `
-      -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8765 `
-      -RemoteAddresses 192.168.1.179 -Action Allow
+      -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8765 -Action Allow
 
 Le portier tourne depuis un dossier de travail git dédié, toujours sur cette branche
 (`git worktree add ~/ialauncher-portier yunohost`) : on peut développer sur `main` dans

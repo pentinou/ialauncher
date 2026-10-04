@@ -11,7 +11,8 @@ en train de traiter pour un agent (voir /api/activity).
     python3 ondemand.py [--listen 0.0.0.0] [--port 8765] [--idle 600]
 
 Pensé pour être joint par un seul proxy authentifié (SSO YunoHost) : comme le
-launcher, il n'a PAS d'authentification ; limitez l'accès à son port (pare-feu).
+launcher, il n'a PAS d'authentification. --allow limite les adresses acceptées (les
+autres reçoivent un refus 403) ; un pare-feu peut s'y ajouter.
 """
 import argparse
 import http.client
@@ -129,7 +130,7 @@ class Launcher:
                 self.arreter(f"{self.idle} s sans activité")
 
 
-def fabriquer_handler(lanceur):
+def fabriquer_handler(lanceur, autorisees):
     class Portier(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -137,6 +138,9 @@ def fabriquer_handler(lanceur):
             pass
 
         def _relayer(self):
+            if autorisees and self.client_address[0] not in autorisees:
+                print(f"[{time.strftime('%T')}] refusé : {self.client_address[0]}", flush=True)
+                return self._repondre(403, "text/plain; charset=utf-8", "Accès refusé".encode())
             lanceur.derniere = time.time()
             if not lanceur.vivant() or not lanceur.pret:
                 lanceur.demarrer()
@@ -203,13 +207,17 @@ def main():
     ap.add_argument("--listen", default="0.0.0.0", help="adresse d'écoute (défaut 0.0.0.0)")
     ap.add_argument("--port", type=int, default=8765, help="port d'écoute (défaut 8765)")
     ap.add_argument("--idle", type=int, default=600, help="secondes d'inactivité avant l'arrêt (défaut 600)")
+    ap.add_argument("--allow", default="",
+                    help="adresses IP acceptées, séparées par des virgules (défaut : toutes)")
     a = ap.parse_args()
+    autorisees = {x.strip() for x in a.allow.split(",") if x.strip()}
 
     lanceur = Launcher(a.idle)
     threading.Thread(target=lanceur.surveiller, daemon=True).start()
-    httpd = ThreadingHTTPServer((a.listen, a.port), fabriquer_handler(lanceur))
+    httpd = ThreadingHTTPServer((a.listen, a.port), fabriquer_handler(lanceur, autorisees))
     httpd.daemon_threads = True
-    print(f"portier IA Launcher : http://{a.listen}:{a.port} (arrêt après {a.idle} s d'inactivité)", flush=True)
+    print(f"portier IA Launcher : http://{a.listen}:{a.port} (arrêt après {a.idle} s d'inactivité ; "
+          f"adresses acceptées : {', '.join(sorted(autorisees)) or 'toutes'})", flush=True)
 
     def quitter(*_):
         raise KeyboardInterrupt
