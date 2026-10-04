@@ -26,6 +26,8 @@ $reglages = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -MultipleInstances IgnoreNew
 
+# une version déjà installée tourne peut-être : on l'arrête pour lancer la nouvelle
+Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $nom -Action $action -Trigger $declencheurs -Principal $principal `
     -Settings $reglages -Description "Portier à la demande d'IA Launcher (WSL $Distro, port 8765)" -Force | Out-Null
 Start-ScheduledTask -TaskName $nom
