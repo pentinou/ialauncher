@@ -192,6 +192,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(sdcpp.loras(q.get("model", "")))
         if path == "/api/gen/outputs":
             return self._json(sdcpp.outputs(q.get("kind", "image")))
+        if path == "/api/gen/outputs/dir":
+            return self._json(sdcpp.outputs_info())
         if path == "/api/storage":
             return self._json(storage.scan())
         if path == "/api/civitai/search":
@@ -319,6 +321,11 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isdir(b.get("path", "")):
                 return self._json({"error": "dossier introuvable"}, 400)
             sdcpp.add_dir(b["path"])
+            return self._json({"ok": True})
+        if path == "/api/gen/outputs/dir":
+            return self._json(sdcpp.set_outputs_dir(b.get("path", "")))
+        if path == "/api/gen/outputs/open":
+            sdcpp.open_outputs(b.get("kind", "image"))
             return self._json({"ok": True})
         if path == "/api/gen/outputs/delete":
             sdcpp.delete_output(b["kind"], b["name"])
