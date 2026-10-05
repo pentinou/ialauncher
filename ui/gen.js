@@ -46,7 +46,8 @@ function visualSkeleton(kind) {
     <div id="gsvc-${kind}" class="small muted"></div>
     <div class="genwrap"><div id="gf-${kind}" class="genform"></div><div id="go-${kind}" class="genout"><p class="muted">Le résultat s'affichera ici.</p></div></div></section>
   <section class="card"><h1>Galerie <button class="link small" onclick="loadOutputs('${kind}')">↻</button></h1>
-    <p class="lead small">Tout est enregistré dans <span class="mono">~/.ialauncher/outputs/${kind}/</span>, avec les réglages à côté (.json). Cliquez sur une ${isV ? 'vidéo' : 'image'} pour la revoir et reprendre ses réglages.</p>
+    <p class="lead small">Chaque fichier est enregistré avec ses réglages à côté (.json). Cliquez sur une ${isV ? 'vidéo' : 'image'} pour la revoir et reprendre ses réglages.</p>
+    <div id="gd-${kind}" class="small"></div>
     <div id="gg-${kind}" class="gallery"></div></section>`;
 }
 
@@ -423,6 +424,7 @@ function resultInfo(kind, f) {
 // ------------------------------------------------------------------ galerie
 async function loadOutputs(kind) {
   try { G['out_' + kind] = await api('/api/gen/outputs?kind=' + kind); } catch (e) { return; }
+  renderOutDir(kind);
   const box = $('gg-' + kind); if (!box) return;
   const items = G['out_' + kind];
   if (kind === 'music') {
@@ -430,6 +432,24 @@ async function loadOutputs(kind) {
     return;
   }
   box.innerHTML = items.length ? items.map(f => `<div class="gthumb" onclick='viewOutput("${kind}", ${esc(JSON.stringify(f.name))})' title="${esc(f.meta.prompt || '')}">${kind === 'video' ? `<video src="${f.url}" muted preload="metadata"></video>` : `<img src="${f.url}" loading="lazy">`}</div>`).join('') : '<p class="muted small">Rien encore.</p>';
+}
+async function renderOutDir(kind) {
+  const box = $('gd-' + kind); if (!box) return;
+  let d; try { d = await api('/api/gen/outputs/dir'); } catch (e) { return; }
+  const sep = d.windows ? '\\' : '/';
+  box.innerHTML = `<div class="row-inline">Dossier : <span class="mono">${esc((d.windows || d.path) + sep + kind)}</span>
+      <button class="btn small" onclick="openOutDir('${kind}')">📂 ouvrir</button>
+      <button class="link" onclick="this.parentNode.nextElementSibling.classList.toggle('hidden')">changer</button></div>
+    <div class="row-inline hidden"><input id="gdi-${kind}" size="50" value="${esc(d.custom ? (d.windows || d.path) : '')}" placeholder="${d.windows ? 'ex. C:\\Users\\vous\\Pictures\\ialauncher' : 'ex. ~/Images/ialauncher'}">
+      <button class="btn small" onclick="setOutDir('${kind}')">enregistrer</button>
+      <span class="muted">vide = dossier par défaut ; les fichiers déjà générés ne sont pas déplacés</span></div>`;
+}
+async function openOutDir(kind) {
+  try { await api('/api/gen/outputs/open', {kind}); toast('Dossier ouvert sur la machine qui fait tourner le launcher'); } catch (e) { toast(e.message); }
+}
+async function setOutDir(kind) {
+  try { await api('/api/gen/outputs/dir', {path: $('gdi-' + kind).value}); } catch (e) { toast(e.message); return; }
+  toast('Dossier de la galerie changé'); loadOutputs(kind);
 }
 function viewOutput(kind, name) {
   const f = (G['out_' + kind] || []).find(x => x.name === name); if (!f) return;
@@ -469,7 +489,7 @@ async function loadMusic() {
       <div id="gsvc-music" class="small muted"></div>
       <div class="genwrap"><div id="gf-music" class="genform"></div><div id="go-music" class="genout"><p class="muted">La musique s’affichera ici.</p></div></div></section>
     <section class="card"><h1>Morceaux générés <button class="link small" onclick="loadOutputs('music')">↻</button></h1>
-      <p class="lead small">Enregistrés dans <span class="mono">~/.ialauncher/outputs/music/</span>.</p><div id="gg-music"></div></section>`;
+      <div id="gd-music" class="small"></div><div id="gg-music"></div></section>`;
     root.dataset.ready = '1';
   }
   await refreshGenStatus();

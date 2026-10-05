@@ -8,6 +8,7 @@
     cache/     métadonnées GGUF déjà lues, catalogue HF…
     logs/      sortie de llama-server
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -36,5 +37,17 @@ def cache_dir() -> Path: return sub("cache")
 def logs_dir() -> Path: return sub("logs")
 def diffusion_dir() -> Path: return sub("diffusion")
 def apps_dir() -> Path: return sub("apps")
-def outputs_dir() -> Path: return sub("outputs")
 def config_file() -> Path: return sub("") / "config.json"
+
+
+def outputs_dir() -> Path:
+    """outputs/ par défaut, ou le dossier choisi dans la galerie (clé « outputs_dir » de config.json)."""
+    try:
+        d = json.loads(config_file().read_text()).get("outputs_dir")
+    except (OSError, ValueError):
+        d = None
+    if not d:
+        return sub("outputs")
+    p = Path(d).expanduser()
+    p.mkdir(parents=True, exist_ok=True)
+    return p

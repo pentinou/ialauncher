@@ -12,6 +12,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -623,6 +624,54 @@ def outputs(kind, limit=60):
             meta = {}
         out.append({"name": p.name, "url": f"/outputs/{kind}/{p.name}", "meta": meta})
     return out
+
+
+def _wslpath(flag, p):
+    """Conversion de chemin Linux ↔ Windows sous WSL (None ailleurs ou en cas d'échec)."""
+    if not shutil.which("wslpath"):
+        return None
+    r = subprocess.run(["wslpath", flag, str(p)], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def outputs_info():
+    d = paths.outputs_dir()
+    return {"path": str(d), "windows": _wslpath("-w", d), "custom": bool(engine.load_config().get("outputs_dir"))}
+
+
+def set_outputs_dir(path):
+    """Change le dossier de la galerie ; vide = retour au dossier par défaut. Sous WSL,
+    un chemin Windows (C:\\Users\\…) est accepté. Les fichiers déjà générés ne bougent pas."""
+    path = (path or "").strip()
+    if path and (":" in path or "\\" in path):
+        path = _wslpath("-u", path) or path
+    if path:
+        Path(path).expanduser().mkdir(parents=True, exist_ok=True)
+    cfg = engine.load_config()
+    if path:
+        cfg["outputs_dir"] = str(Path(path).expanduser())
+    else:
+        cfg.pop("outputs_dir", None)
+    engine.save_config(cfg)
+    return outputs_info()
+
+
+def open_outputs(kind):
+    """Ouvre le dossier dans l'explorateur de fichiers de la machine qui fait tourner le launcher."""
+    if kind not in ("image", "video", "music"):
+        raise RuntimeError("type inconnu")
+    d = paths.outputs_dir() / kind
+    d.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        os.startfile(d)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(d)])
+    elif shutil.which("explorer.exe") and _wslpath("-w", d):
+        subprocess.Popen(["explorer.exe", _wslpath("-w", d)])
+    elif shutil.which("xdg-open"):
+        subprocess.Popen(["xdg-open", str(d)])
+    else:
+        raise RuntimeError("aucun explorateur de fichiers trouvé")
 
 
 def delete_output(kind, name):
