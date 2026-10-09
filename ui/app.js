@@ -187,7 +187,6 @@ function renderProfile() {
   const kvpt = kvPerToken('f16', 'f16');
   $('model-selected').innerHTML = `
     <div class="repo"><b>${esc(p.name || m.name)}</b> <span class="badge">${esc(p.quant)}</span> <span class="badge">${esc(p.arch)}</span>
-      ${p.compatible === false ? `<div class="warn-item error">${esc(p.note)}</div>` : ''}
       ${p.approx ? '<div class="warn-item info">Modèle fragmenté : tailles des couches extrapolées depuis le premier fragment.</div>' : ''}
       <div class="profile">
         <div class="kv"><b>Paramètres</b>${p.n_params ? (p.n_params / 1e9).toFixed(1).replace('.', ',') + ' milliards' : esc(p.size_label || '?')}</div>
@@ -567,7 +566,6 @@ const updateCmdline = debounce(async () => {
 }, 200);
 async function startServer() {
   if (!S.model || !S.model.id) { toast('Le modèle doit être téléchargé avant de lancer'); return; }
-  if (S.profile && S.profile.compatible === false) { toast('Ce fichier n’est pas chargeable par llama.cpp'); return; }
   if (S.est && S.est.warnings.some(w => w.level === 'error') && !confirm('L’estimation prévoit un problème (voir les avertissements). Lancer quand même ?')) return;
   try { S.server = await api('/api/server/start', {model: S.model, cfg: S.cfg}); renderServer(); pollServer(); } catch (e) { toast('Erreur : ' + e.message, 6000); }
 }

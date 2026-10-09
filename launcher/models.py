@@ -77,8 +77,9 @@ def _is_aux(name):
 
 
 def scan():
-    """Liste des modèles locaux : [{id, name, path, size, source, kind, mmproj, shards,
-    compatible, note}]. Les mmproj sont rattachés au modèle du même dossier."""
+    """Liste des modèles locaux : [{id, name, path, size, source, kind, mmproj, shards}].
+    Les mmproj sont rattachés au modèle du même dossier. Les fichiers que llama.cpp ne
+    peut pas charger (blobs Ollama combinés) ne sont pas listés."""
     models = []
     seen = set()
     for label, root, kind in source_dirs():
@@ -117,16 +118,24 @@ def scan():
                 name = str(rel.parent / re.sub(r"-\d{5}-of-\d{5}", "", p.stem)) if rel.parent != Path(".") else p.stem
                 models.append({"id": _id(key), "name": name.replace("\\", "/"), "path": key, "size": size,
                                "source": label, "kind": kind, "mmproj": str(mmprojs[0]) if mmprojs else "",
-                               "shards": len(shards), "compatible": True, "note": "",
+                               "shards": len(shards),
                                "draft": _is_draft(p.name), "mtime": p.stat().st_mtime})
+    models = [m for m in models if _launchable(m["path"])]
     return sorted(models, key=lambda m: (m["kind"] != "launcher", m["name"].lower()))
+
+
+def _launchable(path):
+    try:
+        return profile_local(path)["compatible"]
+    except Exception:  # noqa: BLE001 — en-tête illisible : l'erreur s'affichera à la sélection
+        return True
 
 
 def _scan_ollama(root, label):
     """Les modèles Ollama sont des blobs GGUF nommés par leur empreinte ; le manifeste
     donne le nom lisible et sépare poids (image.model) et projecteur (image.projector).
     Un blob qui embarque lui-même les encodeurs vision/audio (fichier combiné) n'est
-    pas lisible par llama.cpp officiel : on le signale au lieu de le proposer."""
+    pas lisible par llama.cpp officiel : scan() l'écarte."""
     out = []
     man = root / "manifests"
     if not man.is_dir():
@@ -154,7 +163,7 @@ def _scan_ollama(root, label):
         name = name.replace("library/", "")
         out.append({"id": _id(str(blob)), "name": name, "path": str(blob), "size": size or blob.stat().st_size,
                     "source": label, "kind": "ollama", "mmproj": str(proj) if proj and proj.exists() else "",
-                    "shards": 1, "compatible": True, "note": "", "mtime": blob.stat().st_mtime})
+                    "shards": 1, "mtime": blob.stat().st_mtime})
     return out
 
 
@@ -205,9 +214,6 @@ def profile_local(path):
     # Un fichier texte qui embarque des encodeurs vision/audio (blobs Ollama combinés)
     # n'est pas chargeable par llama.cpp officiel : « wrong number of tensors ».
     prof["compatible"] = prof["mmproj_bytes"] == 0
-    if not prof["compatible"]:
-        prof["note"] = ("Fichier combiné (poids + encodeur vision/audio dans le même GGUF, format Ollama) : "
-                        "llama.cpp officiel ne peut pas le charger. Téléchargez la version Hugging Face du modèle.")
     cache.parent.mkdir(exist_ok=True)
     cache.write_text(json.dumps(prof))
     return prof
