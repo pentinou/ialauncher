@@ -4,22 +4,6 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
-## 0. Project Memory — read first
-
-This project keeps a persistent knowledge base in:
-
-```
-~/.claude/projects/-home-pentinou-keyboard-firmware-maker/memory/
-```
-
-- **`MEMORY.md`** is the index (architecture, supported keyboards, current state, backlog). Read it at the start of every session.
-- The other `*.md` files are one-fact-per-file notes, cross-linked with Obsidian-style `[[wikilinks]]`. Follow the links the index points to before acting.
-- **Before any Sofle hardware debug**, re-read `[[sofle_debug_log]]`.
-- **Before editing any ZMK template**, re-read `[[zmk_build_gotchas]]`.
-- Keep this base up to date: when you learn a durable, non-obvious fact, add/update a note and add one line to `MEMORY.md`. Don't duplicate what the code or git history already records.
-
-> The `memory/` folder is plain markdown with wikilinks — it can be opened directly as an Obsidian vault for browsing/editing the same notes.
-
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
