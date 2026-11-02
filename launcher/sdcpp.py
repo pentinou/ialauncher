@@ -611,19 +611,39 @@ def _save(kind, data, ext, meta):
     return {"name": p.name, "url": f"/outputs/{kind}/{p.name}", "meta": meta}
 
 
+def _meta(p):
+    try:
+        return json.loads(p.with_suffix(".json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 def outputs(kind, limit=60):
+    """Les `limit` fichiers les plus récents, plus tous ceux gardés (« kept ») même plus anciens."""
     d = paths.outputs_dir() / kind
     if not d.is_dir():
         return []
     items = sorted((p for p in d.iterdir() if p.suffix != ".json"), key=lambda p: p.stat().st_mtime, reverse=True)
     out = []
-    for p in items[:limit]:
-        try:
-            meta = json.loads(p.with_suffix(".json").read_text())
-        except (OSError, ValueError):
-            meta = {}
-        out.append({"name": p.name, "url": f"/outputs/{kind}/{p.name}", "meta": meta})
+    for i, p in enumerate(items):
+        meta = _meta(p)
+        if i < limit or meta.get("kept"):
+            out.append({"name": p.name, "url": f"/outputs/{kind}/{p.name}", "meta": meta})
     return out
+
+
+def keep_output(kind, name, keep):
+    """Marque (ou démarque) un fichier comme gardé : la galerie affiche alors son prompt et ses réglages."""
+    p = _output_path(kind, name)
+    if not p.is_file():
+        raise RuntimeError("fichier introuvable")
+    meta = _meta(p)
+    if keep:
+        meta["kept"] = True
+    else:
+        meta.pop("kept", None)
+    p.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
+    return meta
 
 
 def _wslpath(flag, p):
@@ -674,9 +694,14 @@ def open_outputs(kind):
         raise RuntimeError("aucun explorateur de fichiers trouvé")
 
 
-def delete_output(kind, name):
+def _output_path(kind, name):
     p = (paths.outputs_dir() / kind / name).resolve()
     if p.parent != (paths.outputs_dir() / kind).resolve():
         raise RuntimeError("chemin invalide")
+    return p
+
+
+def delete_output(kind, name):
+    p = _output_path(kind, name)
     p.unlink(missing_ok=True)
     p.with_suffix(".json").unlink(missing_ok=True)
