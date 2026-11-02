@@ -359,6 +359,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/gen/outputs/open":
             sdcpp.open_outputs(b.get("kind", "image"))
             return self._json({"ok": True})
+        if path == "/api/gen/outputs/keep":
+            return self._json(sdcpp.keep_output(b["kind"], b["name"], bool(b.get("keep"))))
         if path == "/api/gen/outputs/delete":
             sdcpp.delete_output(b["kind"], b["name"])
             return self._json({"ok": True})

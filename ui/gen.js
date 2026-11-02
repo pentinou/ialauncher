@@ -47,7 +47,7 @@ function visualSkeleton(kind) {
     <div id="gsvc-${kind}" class="small muted"></div>
     <div class="genwrap"><div id="gf-${kind}" class="genform"></div><div id="go-${kind}" class="genout"><p class="muted">Le résultat s'affichera ici.</p></div></div></section>
   <section class="card"><h1>Galerie <button class="link small" onclick="loadOutputs('${kind}')">↻</button></h1>
-    <p class="lead small">Chaque fichier est enregistré avec ses réglages à côté (.json). Cliquez sur une ${isV ? 'vidéo' : 'image'} pour la revoir et reprendre ses réglages.</p>
+    <p class="lead small">Chaque fichier est enregistré avec ses réglages à côté (.json). Cliquez sur une ${isV ? 'vidéo' : 'image'} pour la revoir et reprendre ses réglages ; « ☆ garder » l’affiche ici avec son prompt et ses paramètres, et la conserve dans la galerie même quand elle n’est plus parmi les 60 dernières.</p>
     <div id="gd-${kind}" class="small"></div>
     <div id="gg-${kind}" class="gallery"></div></section>`;
 }
@@ -416,7 +416,8 @@ function resultInfo(kind, f) {
   const m = f.meta || {};
   return `<div class="small muted" style="margin-top:6px">${esc(m.model_name || '')} · graine <span class="mono">${m.seed}</span> · ${m.width ? m.width + '×' + m.height + ' · ' : ''}${m.steps ? m.steps + ' étapes · ' : ''}${m.gen_seconds != null ? m.gen_seconds + ' s de calcul' + (m.seconds > m.gen_seconds + 1 ? ` (+ ${(m.seconds - m.gen_seconds).toFixed(0)} s de chargement)` : '') : ''}</div>
     <div class="small">${esc(m.prompt || '')}</div>
-    <div class="row-inline"><button class="btn small" onclick='reuseMeta("${kind}", ${esc(JSON.stringify(f.name))})'>reprendre ces réglages</button>
+    <div class="row-inline">${kind === 'music' ? '' : `<button class="btn small gkeep ${m.kept ? 'primary' : ''}" data-name="${esc(f.name)}" data-kept="${m.kept ? 1 : ''}" onclick="keepOutput('${kind}', this.dataset.name, !this.dataset.kept)" title="afficher son prompt et ses réglages dans la galerie">${m.kept ? '★ gardée' : '☆ garder avec ses réglages'}</button>`}
+      <button class="btn small" onclick='reuseMeta("${kind}", ${esc(JSON.stringify(f.name))})'>reprendre ces réglages</button>
       ${kind === 'image' ? `<button class="btn small" onclick='toInput("${f.url}")'>utiliser comme image d’entrée</button>` : ''}
       <a class="btn small" href="${f.url}" download>télécharger</a>
       <button class="btn small" onclick='deleteOutput("${kind}", ${esc(JSON.stringify(f.name))})'>supprimer</button></div>`;
@@ -432,7 +433,38 @@ async function loadOutputs(kind) {
     box.innerHTML = items.length ? items.map(f => `<div class="track"><div><b>${esc((f.meta.prompt || '').slice(0, 80) || f.name)}</b> <span class="muted small">${esc(f.meta.model || '')} · ${f.meta.duration ? f.meta.duration + ' s' : ''} · graine ${f.meta.seed}</span></div>${mediaTag('music', f.url)}<div class="row-inline small"><button class="link" onclick='reuseMeta("music", ${esc(JSON.stringify(f.name))})'>reprendre</button> <a href="${f.url}" download>télécharger</a> <button class="link" onclick='deleteOutput("music", ${esc(JSON.stringify(f.name))})'>supprimer</button></div></div>`).join('') : '<p class="muted small">Rien encore.</p>';
     return;
   }
-  box.innerHTML = items.length ? items.map(f => `<div class="gthumb" onclick='viewOutput("${kind}", ${esc(JSON.stringify(f.name))})' title="${esc(f.meta.prompt || '')}">${kind === 'video' ? `<video src="${f.url}" muted preload="metadata"></video>` : `<img src="${f.url}" loading="lazy">`}</div>`).join('') : '<p class="muted small">Rien encore.</p>';
+  box.innerHTML = items.length ? items.map(f => {
+    const n = esc(JSON.stringify(f.name)), m = f.meta;
+    const th = `<div class="gthumb" onclick='viewOutput("${kind}", ${n})' title="${esc(m.prompt || '')}">${kind === 'video' ? `<video src="${f.url}" muted preload="metadata"></video>` : `<img src="${f.url}" loading="lazy">`}${m.kept ? '<span class="gstar">★</span>' : ''}</div>`;
+    if (!m.kept) return th;
+    return `<div class="gkept">${th}<div class="gcap small"><div class="gprompt">${esc(m.prompt || '(sans prompt)')}</div>
+      ${m.negative ? `<div class="muted"><b>négatif :</b> ${esc(m.negative)}</div>` : ''}
+      <div class="muted">${esc(paramsLine(m))}</div>
+      <div class="row-inline"><button class="link" onclick='reuseMeta("${kind}", ${n})'>reprendre</button><button class="link" onclick='keepOutput("${kind}", ${n}, false)'>ne plus garder</button></div></div></div>`;
+  }).join('') : '<p class="muted small">Rien encore.</p>';
+}
+function paramsLine(m) {
+  const p = [m.model_name || m.model];
+  if (m.width) p.push(m.width + '×' + m.height);
+  if (m.steps) p.push(m.steps + ' étapes' + (m.high_noise_steps ? ` (+ ${m.high_noise_steps} bruit fort)` : ''));
+  if (m.cfg != null && m.cfg !== '') p.push('CFG ' + m.cfg);
+  if (m.sampler) p.push(m.sampler + (m.scheduler ? ' / ' + m.scheduler : ''));
+  else if (m.scheduler) p.push(m.scheduler);
+  if (m.clip_skip > 0) p.push('clip skip ' + m.clip_skip);
+  if (m.frames) p.push(m.frames + ' images' + (m.fps ? ' à ' + m.fps + ' i/s' : ''));
+  if (m.flow_shift) p.push('flow shift ' + m.flow_shift);
+  if (m.hires) p.push(`hires ×${m.hires_scale} (${m.hires_upscaler}, débruitage ${m.hires_denoise})`);
+  if (m.seed != null) p.push('graine ' + m.seed);
+  return p.filter(Boolean).join(' · ');
+}
+async function keepOutput(kind, name, keep) {
+  try { await api('/api/gen/outputs/keep', {kind, name, keep}); } catch (e) { toast(e.message); return; }
+  document.querySelectorAll(`#go-${kind} .gkeep`).forEach(b => {
+    if (b.dataset.name !== name) return;
+    b.dataset.kept = keep ? 1 : ''; b.classList.toggle('primary', keep); b.textContent = keep ? '★ gardée' : '☆ garder avec ses réglages';
+  });
+  toast(keep ? 'Gardée : prompt et réglages affichés dans la galerie' : 'N’est plus gardée');
+  loadOutputs(kind);
 }
 async function renderOutDir(kind) {
   const box = $('gd-' + kind); if (!box) return;

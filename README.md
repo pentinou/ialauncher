@@ -297,7 +297,11 @@ Mesuré sur RTX 3090 (WSL2, Ryzen 3950X), temps de calcul hors premier chargemen
 
 Tout ce qui est généré est rangé dans `outputs/image`, `outputs/video` et
 `outputs/music`, avec un `.json` des réglages à côté : la galerie permet de revoir un
-résultat et de reprendre ses réglages (graine comprise).
+résultat et de reprendre ses réglages (graine comprise). Le bouton « ☆ garder avec ses
+réglages » marque une image ou une vidéo réussie (`"kept": true` dans son `.json`) : la
+galerie l'affiche alors avec son prompt, son négatif et ses paramètres, et la conserve
+même quand elle n'est plus parmi les 60 dernières. Les PNG portent aussi les réglages
+dans leurs métadonnées (bloc `parameters` écrit par stable-diffusion.cpp, au format A1111).
 
 ## Espace disque
 
@@ -523,7 +527,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | * | `/proxy/…` | relais vers llama-server (normalise les messages Anthropic) |
 | GET | `/api/gen/status`, `/api/gen/models?kind=image\|video`, `/api/gen/loras?model=`, `/api/gen/outputs?kind=` | image / vidéo / musique : état, modèles, LoRA, galerie |
 | POST | `/api/gen/engine/install`, `/api/gen/download`, `/api/music/install` | installation des moteurs et modèles |
-| POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie |
+| POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/keep`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie (garder, supprimer) |
 | GET/POST | `/api/storage`, `/api/storage/delete` | espace disque |
 | GET/POST | `/api/civitai/search`, `/api/civitai/token`, `/api/civitai/download` | Civitai |
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
