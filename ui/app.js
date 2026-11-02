@@ -218,7 +218,7 @@ async function loadCatalog() {
   $('catalog').innerHTML = `<p class="muted small">Étiquettes : ${Object.entries(S.catalog.tags).map(([k, v]) => `<span class="badge" title="${esc(v)}">${k}</span>`).join(' ')} — survolez pour l’explication. ${vram ? `Votre GPU a ${fmtG(vram)} de VRAM : un modèle « tient » si ses poids en Q4 laissent 2-4 Gio pour le contexte.` : ''}</p>
     <div class="cat">` + S.catalog.entries.map(c => `
     <div class="mitem" onclick="openRepo('${esc(c.repo)}')">
-      <div class="n">${esc(c.name)} <span class="muted small mono">${esc(c.repo)}</span></div>
+      <div class="n">${esc(c.name)} <span class="muted small mono">${esc(c.repo)}</span>${c.added ? ` <span class="badge acc" title="validé dans l’onglet Mises à jour">nouveau · ${esc(c.added)}</span>` : ''}</div>
       <div class="s">${c.tags.map(t => `<span class="badge" title="${esc(S.catalog.tags[t] || '')}">${t}</span>`).join('')}</div>
       <div class="blurb">${esc(c.blurb)}</div>
     </div>`).join('') + '</div>';

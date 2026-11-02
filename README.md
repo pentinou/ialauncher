@@ -34,6 +34,7 @@ générale ; le code est indépendant.
 - [Utiliser le modèle depuis d'autres applications](#utiliser-le-modèle-depuis-dautres-applications)
 - [Image, vidéo, musique](#image-vidéo-musique)
 - [Espace disque](#espace-disque)
+- [Mises à jour des moteurs et des modèles](#mises-à-jour-des-moteurs-et-des-modèles)
 - [Configurations enregistrées (presets)](#configurations-enregistrées-presets)
 - [Où sont les fichiers](#où-sont-les-fichiers)
 - [Précision de l'estimation](#précision-de-lestimation)
@@ -308,6 +309,41 @@ sans permettre de les supprimer, les modèles lus en place (WebUI, Ollama, LM St
 le cache de `uv` (partagé avec vos autres projets uv, vidable). Chaque téléchargement
 vérifie d'abord l'espace libre.
 
+## Mises à jour des moteurs et des modèles
+
+L'onglet **🔄 Mises à jour** réunit :
+
+- **Moteurs** : version installée et dernière version de llama.cpp, stable-diffusion.cpp
+  et ACE-Step, avec un bouton de mise à jour (même installation que dans leurs onglets :
+  compilation locale ou binaire officiel ; l'ancienne version de llama.cpp / sd.cpp reste
+  installée). Un modèle récent demande souvent un moteur récent.
+- **Nouvelles versions des modèles** (bouton « Chercher les nouvelles versions », résultat
+  gardé 6 h). Le nom de chaque modèle (catalogue texte, GGUF téléchargés, catalogue
+  image et vidéo) est découpé en famille, numéro de version et autres mots
+  (`Qwen3.6-35B-A3B` → qwen / 3.6 / 35b a3b). Le launcher cherche ensuite sur Hugging
+  Face les dépôts GGUF de la même famille publiés depuis, chez le même auteur et chez
+  quelques quantiseurs reconnus (unsloth, ggml-org ; leejet, QuantStack, city96 pour
+  l'image). Il propose une **nouvelle version** (numéro plus élevé à taille comparable :
+  FLUX.2 klein → FLUX.3 image klein) ou une **variante** (même version, nom en partie
+  différent : Turbo, base, MTP…). Une taille différente (4B / 27B) n'est pas proposée.
+- **Remplacer** met le modèle retenu à la place de l'ancien dans le catalogue. Rien n'est
+  téléchargé et les fichiers déjà présents restent : l'onglet Stockage permet de les
+  supprimer. Pour l'image et la vidéo, le launcher prépare d'abord une **fiche** :
+  - il cherche la page de la documentation de stable-diffusion.cpp qui cite le modèle et
+    en lit la commande d'exemple (encodeur de texte, VAE, étapes, CFG, sampler, image de
+    référence), ainsi que les réglages propres à la branche (section « Turbo »…) ;
+  - pour chaque fichier, il reprend d'abord un fichier déjà au catalogue, sinon celui de
+    l'ancien modèle s'il s'agit d'une variante, sinon un dépôt cité par la doc (les
+    dépôts protégés sont écartés), sinon celui de l'ancien modèle ;
+  - il signale si le stable-diffusion.cpp installé est antérieur à cette page de doc.
+
+  La fiche est modifiable avant validation. « Ignorer » écarte un dépôt des recherches
+  suivantes.
+- **Choix déjà validés** : chaque remplacement peut être annulé (l'ancien modèle revient).
+  Les choix sont enregistrés dans `catalog-user.json` ; le catalogue intégré au code n'est
+  pas modifié. Un modèle d'image remplacé reste connu du launcher, car les checkpoints
+  Civitai de sa famille utilisent encore son encodeur et son VAE.
+
 ## Configurations enregistrées (presets)
 
 Un preset = un modèle + ses réglages, sauvegardé dans `presets/<nom>.json`. Enregistrez
@@ -331,6 +367,7 @@ agents/    scripts générés pour Claude Code / Codex / OpenCode
 cache/     en-têtes GGUF déjà lus, catalogue Hugging Face, sources llama.cpp
 logs/      llama-server.log, sd-server.log, ace-step.log (sortie du dernier lancement)
 config.json   moteur choisi, dossiers de modèles ajoutés
+catalog-user.json  remplacements validés dans l'onglet Mises à jour, dépôts ignorés
 ```
 
 Les modèles trouvés dans les dossiers d'**Ollama** (`~/.ollama/models`,
@@ -458,9 +495,11 @@ launcher/
   music.py             musique : installation d'ACE-Step (uv), poids, génération
   civitai.py           recherche et téléchargement de checkpoints / LoRA sur Civitai
   storage.py           espace disque : mesure et suppression
+  updates.py           mises à jour : moteurs, nouvelles versions des modèles, fiches, catalogue utilisateur
 ui/
   index.html, app.js, style.css   interface, sans framework ni build
   gen.js               onglets Image, Vidéo, Musique
+  updates.js           onglet Mises à jour
 ```
 
 Pour vérifier l'inventaire matériel seul : `python3 -m launcher.hardware`.
@@ -487,6 +526,8 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie |
 | GET/POST | `/api/storage`, `/api/storage/delete` | espace disque |
 | GET/POST | `/api/civitai/search`, `/api/civitai/token`, `/api/civitai/download` | Civitai |
+| GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
+| POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation

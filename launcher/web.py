@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from . import (hardware, engine, jobs, models, catalog, estimate, recommend, presets, paths, agents,
-               sdcpp, music, gen_catalog, services, storage, civitai)
+               sdcpp, music, gen_catalog, services, storage, civitai, updates)
 from .server import SERVER
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -222,6 +222,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/civitai/search":
             return self._json(civitai.search(q.get("q", ""), q.get("type", "Checkpoint"), q.get("family", ""),
                                              q.get("sort", "Most Downloaded"), q.get("nsfw") == "1", q.get("cursor", "")))
+        if path == "/api/updates/engines":
+            return self._json({"engines": updates.engines()})
+        if path == "/api/updates/models":
+            return self._json(updates.scan(force=q.get("refresh") == "1"))
+        if path == "/api/updates/prefill":
+            return self._json(updates.prefill(q["ref"], q["repo"], q.get("type", "version")))
+        if path == "/api/updates/user":
+            return self._json(updates.load_user())
         if path == "/api/paths":
             return self._json({"home": str(paths.home()), "models": str(paths.models_dir()),
                                "engines": str(paths.engines_dir()), "logs": str(paths.logs_dir())})
@@ -368,6 +376,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "une installation est déjà en cours"}, 409)
             j = jobs.start("music-install", "Installation d'ACE-Step", music.install)
             return self._json({"job": j.to_dict()})
+        if path == "/api/updates/accept":
+            return self._json(updates.accept(b))
+        if path == "/api/updates/ignore":
+            updates.ignore(b["repo"])
+            return self._json({"ok": True})
+        if path == "/api/updates/revert":
+            return self._json(updates.revert(b["kind"], b["key"]))
         if path == "/api/agents/test":
             if SERVER.state != "ready":
                 return self._json({"ok": False, "detail": "le serveur n'est pas prêt"})

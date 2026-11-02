@@ -119,6 +119,9 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .modes{display:flex;gap:4px}
 .mode{background:none;border:1px solid transparent;color:var(--muted);padding:5px 12px;border-radius:8px;cursor:pointer;font:inherit}
 .mode:hover{color:var(--text)}.mode.active{color:var(--text);border-color:var(--acc);background:var(--card2)}
+/* mises à jour */
+.updc{border-top:1px solid var(--line);padding:8px 0 2px;margin-top:8px}
+.fiche{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:6px 0}
 /* génération */
 .genwrap{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;margin-top:10px}
 .genform textarea{width:100%;resize:vertical}

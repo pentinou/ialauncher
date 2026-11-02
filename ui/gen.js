@@ -19,11 +19,12 @@ const LS = {
 function showMode(m) {
   G.mode = m;
   document.querySelectorAll('.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  ['text', 'image', 'video', 'music', 'storage'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
+  ['text', 'image', 'video', 'music', 'storage', 'updates'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
   LS.set('mode', m);
   if (m === 'image' || m === 'video') loadVisual(m);
   if (m === 'music') loadMusic();
   if (m === 'storage') loadStorage();
+  if (m === 'updates') loadUpdates();
 }
 
 async function refreshGenStatus() {
@@ -113,7 +114,7 @@ function renderModels(kind) {
   let h = `<h3 class="small muted" style="margin:4px 0 6px">CATALOGUE — MODÈLES À TÉLÉCHARGER</h3>
     <p class="small muted" style="margin:0 0 8px">Chacun se compose de plusieurs fichiers, téléchargés ensemble : le modèle de diffusion, un encodeur de texte (petit LLM) et un VAE. Ils servent aussi de base aux checkpoints Civitai de leur famille.</p>` + '<div class="cat">' + cat.map(m => `
     <div class="mitem ${sel && sel.id === m.id ? 'sel' : ''}">
-      <div class="n">${esc(m.name)} <span class="badge">${esc(m.license)}</span></div>
+      <div class="n">${esc(m.name)} <span class="badge">${esc(m.license)}</span>${m.added ? ` <span class="badge acc" title="validé dans l’onglet Mises à jour">nouveau · ${esc(m.added)}</span>` : ''}</div>
       <div class="s">${m.tags.map(t => `<span class="badge" title="${esc((G.tags || {})[t] || '')}">${esc(t)}</span>`).join('')}<span>${fmtGB(m.size)} au total</span></div>
       <div class="blurb">${esc(m.blurb)}</div>
       ${m.notice ? `<div class="warn-item warn small">⚠ ${esc(m.notice)}</div>` : ''}

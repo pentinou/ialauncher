@@ -280,7 +280,7 @@ def _arch(p):
 def models(kind):
     out = []
     for e in gen_catalog.CATALOG:
-        if e["kind"] != kind:
+        if e["kind"] != kind or e.get("hidden"):    # remplacé par une version plus récente
             continue
         files = _files_of(e)
         out.append({**{k: v for k, v in e.items() if k != "files"},

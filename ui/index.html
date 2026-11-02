@@ -15,6 +15,7 @@
     <button class="mode" data-mode="video" onclick="showMode('video')">🎬 Vidéo</button>
     <button class="mode" data-mode="music" onclick="showMode('music')">🎵 Musique</button>
     <button class="mode" data-mode="storage" onclick="showMode('storage')">💾 Stockage</button>
+    <button class="mode" data-mode="updates" onclick="showMode('updates')">🔄 Mises à jour</button>
   </nav>
   <div class="pills">
     <span class="pill" id="pill-engine">moteur…</span>
@@ -151,10 +152,12 @@
 <div id="mode-video" class="hidden"></div>
 <div id="mode-music" class="hidden"></div>
 <div id="mode-storage" class="hidden"></div>
+<div id="mode-updates" class="hidden"></div>
 </main>
 </div>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>
 <script src="/static/gen.js"></script>
+<script src="/static/updates.js"></script>
 </body>
 </html>
