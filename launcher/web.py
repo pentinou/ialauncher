@@ -212,6 +212,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"models": sdcpp.models(q.get("kind", "image")), "tags": gen_catalog.TAG_HELP,
                                "families": sdcpp.families(),
                                "webui": [str(w) for w in sdcpp.webui_installs()]})
+        if path == "/api/gen/previews":
+            return self._json(sdcpp.previews(q.get("kind", "image")))
         if path == "/api/gen/loras":
             return self._json(sdcpp.loras(q.get("model", "")))
         if path == "/api/gen/outputs":

@@ -6,11 +6,14 @@ et passée en paramètre `token` de l'URL. Chaque fichier est rangé avec un .js
 métadonnées (famille, mots déclencheurs…) :
     diffusion/checkpoints/   checkpoints
     diffusion/loras/         LoRA (dossier de LoRA commun, voir sdcpp.lora_dir)"""
+import hashlib
 import json
 import shutil
+import threading
 import time
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 import urllib.parse
 
 from . import paths, download, engine, gen_catalog
@@ -155,3 +158,139 @@ def download_file(job, kind, info):
             "words": v["words"], "image": v["image"], "url": info["model"]["url"]}
     dest.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     return {"path": str(dest)}
+
+
+# ---------------------------------------------------------------- aperçus de l'arborescence
+
+IDS_MISS_TTL = 7 * 86400        # fichier inconnu de Civitai : on réessaie au bout d'une semaine
+BASE_TTL = 7 * 86400
+_ids_lock = threading.Lock()
+
+
+def _ids_file():
+    return paths.cache_dir() / "civitai-ids.json"
+
+
+def _images(lst):
+    """Images d'exemple (pas de vidéo), réduites par le CDN de Civitai, avec leur niveau
+    (1 = tout public) : l'interface choisit selon la case « contenu adulte »."""
+    out = []
+    for im in lst:
+        if im.get("type", "image") == "image" and im.get("url"):
+            out.append({"url": im["url"].replace("/original=true/", "/width=360/"), "nsfw": im.get("nsfwLevel") or 1})
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _autov1(p):
+    """Empreinte courte « AutoV1 » de la WebUI : 64 Ko lus à 1 Mo du début (instantané,
+    même pour un checkpoint de 7 Go sur un disque Windows)."""
+    with open(p, "rb") as f:
+        f.seek(0x100000)
+        return hashlib.sha256(f.read(0x10000)).hexdigest()[:8]
+
+
+def _sha256(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _lookup(p):
+    """Version Civitai d'un fichier local, d'après son empreinte. None = réseau en panne
+    (ne rien mémoriser), {"found": False} = inconnu de Civitai."""
+    try:
+        meta = json.loads(p.with_suffix(".json").read_text())
+        if meta.get("version_id"):         # téléchargé depuis le launcher : déjà décrit
+            return {"found": True, "name": meta.get("name", ""), "version": meta.get("version", ""),
+                    "baseModel": meta.get("baseModel", ""), "family": meta.get("family") or "", "url": meta.get("url", ""),
+                    "words": meta.get("words") or [], "images": [{"url": meta["image"], "nsfw": 1}] if meta.get("image") else []}
+    except (OSError, ValueError):
+        pass
+    size = p.stat().st_size
+    tries = [_autov1] if size > 0x110000 else []
+    if size < 1.5e9:            # petit fichier (LoRA) : l'empreinte complète, au cas où
+        tries.append(_sha256)
+    for fn in tries:
+        try:
+            v = download.fetch_json(f"{API}/model-versions/by-hash/{fn(p)}", timeout=30)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue
+            return None
+        except Exception:  # noqa: BLE001
+            return None
+        # l'empreinte courte peut se tromper : la taille du fichier doit concorder
+        if not any(abs(f.get("sizeKB", 0) * 1024 - size) < max(2e6, size * 0.01) for f in v.get("files", [])):
+            continue
+        return {"found": True, "name": (v.get("model") or {}).get("name", ""), "version": v.get("name", ""),
+                "baseModel": v.get("baseModel", ""), "family": gen_catalog.family_of_civitai(v.get("baseModel", "")) or "",
+                "url": f"https://civitai.com/models/{v.get('modelId')}?modelVersionId={v.get('id')}",
+                "words": v.get("trainedWords") or [], "images": _images(v.get("images") or [])}
+    return {"found": False}
+
+
+def _base_lookup(base):
+    """Images d'exemple d'un modèle de base : celles de ses modèles les plus téléchargés, le
+    modèle qui porte son nom d'abord. Deux requêtes : en mode « tout public », Civitai ne
+    renvoie que des images de niveau 1 ; l'autre complète pour la case « contenu adulte »."""
+    norm = lambda t: "".join(ch for ch in t.lower() if ch.isalnum())     # noqa: E731
+    imgs = []
+    for nsfw in ("false", "true"):
+        q = [("limit", "5"), ("sort", "Most Downloaded"), ("nsfw", nsfw), ("baseModels", base)]
+        try:
+            d = download.fetch_json(f"{API}/models?{urllib.parse.urlencode(q)}", timeout=40)
+        except Exception:  # noqa: BLE001
+            return None
+        items = sorted(d.get("items", []), key=lambda m: norm(base) not in norm(m.get("name", "")))
+        for m in items:
+            for im in _images(((m.get("modelVersions") or [{}])[0]).get("images") or []):
+                if im["url"] not in {i["url"] for i in imgs}:
+                    imgs.append(im if nsfw == "true" else {**im, "nsfw": 1})
+    return {"found": bool(imgs), "images": imgs[:24]}
+
+
+def previews(files, bases):
+    """{"files": {chemin: info}, "bases": {modèle de base: info}} pour l'arborescence, avec un
+    cache disque : chaque fichier n'est cherché sur Civitai qu'une fois (tant qu'il ne change pas)."""
+    with _ids_lock:
+        try:
+            cache = json.loads(_ids_file().read_text())
+        except (OSError, ValueError):
+            cache = {}
+    now = time.time()
+    todo = []
+    for f in files:
+        p = Path(f)
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        c = cache.get(f)
+        if not c or c.get("key") != [st.st_size, int(st.st_mtime)] or (not c.get("found") and now - c.get("ts", 0) > IDS_MISS_TTL):
+            todo.append(("f", f, [st.st_size, int(st.st_mtime)]))
+    for b in bases:
+        c = cache.get("base:" + b)
+        if not c or now - c.get("ts", 0) > BASE_TTL:
+            todo.append(("b", b, None))
+
+    def run(t):
+        kind, k, key = t
+        return t, (_lookup(Path(k)) if kind == "f" else _base_lookup(k))
+    if todo:
+        with ThreadPoolExecutor(6) as ex:
+            res = list(ex.map(run, todo))
+        with _ids_lock:
+            try:
+                cache = json.loads(_ids_file().read_text())
+            except (OSError, ValueError):
+                cache = {}
+            for (kind, k, key), info in res:
+                if info is not None:
+                    cache[k if kind == "f" else "base:" + k] = {**info, "key": key, "ts": now}
+            _ids_file().write_text(json.dumps(cache, ensure_ascii=False))
+    return {"files": {f: cache[f] for f in files if f in cache},
+            "bases": {b: cache["base:" + b] for b in bases if "base:" + b in cache}}
