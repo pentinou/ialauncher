@@ -306,6 +306,15 @@ def families():
     return out
 
 
+def previews(kind):
+    """Images et identité Civitai des modèles, checkpoints et LoRA de l'arborescence."""
+    from . import civitai
+    ms = models(kind)
+    files = [m["path"] for m in ms if m.get("local")] + [x["path"] for x in loras("")["loras"]]
+    bases = sorted({m["base"] for m in ms if not m.get("local") and m.get("base")})
+    return civitai.previews(files, bases)
+
+
 def find(model_id):
     if model_id.startswith("local:"):
         return next((m for m in local_checkpoints() if m["id"] == model_id), None)
@@ -378,7 +387,7 @@ def loras(model_id):
     for p in sorted(d.rglob("*"), key=lambda x: x.stem.lower()):
         if p.suffix.lower() in (".safetensors", ".ckpt", ".gguf") and p.is_file():
             fam, words = _lora_family(p)
-            items.append({"name": p.stem, "family": fam, "words": words, "base": _meta(p).get("baseModel", ""),
+            items.append({"name": p.stem, "family": fam, "words": words, "base": _meta(p).get("baseModel", ""), "path": str(p),
                           "source": p.relative_to(d).parts[0] if len(p.relative_to(d).parts) > 1 else "Civitai"})
     return {"dir": str(d), "loras": items, "family": (m or {}).get("family", "")}
 

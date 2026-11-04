@@ -244,7 +244,14 @@ dessous, ses **checkpoints** : les poids d'origine, puis les versions retravaill
 sur un modèle de base, il marche avec les checkpoints de sa famille ; ceux faits pour la
 même base que le checkpoint (Pony pour un checkpoint Pony…) sont en tête, les autres de la
 famille ensuite. Un clic ajoute le LoRA au prompt avec ses mots déclencheurs, un second
-l'en retire.
+l'en retire. Chaque modèle, checkpoint et LoRA porte une **image d'exemple de Civitai** :
+les fichiers de la WebUI y sont retrouvés par leur empreinte courte (« AutoV1 », 64 Ko lus,
+confirmée par la taille du fichier ; empreinte complète en secours pour les petits
+fichiers), ce qui donne aussi leur vrai nom, un lien vers leur page et leur base exacte
+(Pony, Illustrious…), utilisée pour trier les LoRA. Résultat gardé dans
+`cache/civitai-ids.json` (un fichier inconnu de Civitai est recherché de nouveau au bout
+d'une semaine). Seules les images tout public s'affichent, sauf si la case « contenu
+adulte » de la recherche Civitai est cochée.
 
 **Stable Diffusion WebUI n'est pas nécessaire** : le moteur est stable-diffusion.cpp, que
 le launcher installe lui-même. Si une WebUI ou Forge est présente, ses fichiers sont
@@ -546,7 +553,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | POST | `/api/chat` | chat de test (flux) |
 | GET/POST | `/api/agents`, `/api/agents/test`, `/api/agents/scripts`, `/api/agents/open` | outils de code |
 | * | `/proxy/…` | relais vers llama-server (normalise les messages Anthropic) |
-| GET | `/api/gen/status`, `/api/gen/models?kind=image\|video`, `/api/gen/loras?model=`, `/api/gen/outputs?kind=` | image / vidéo / musique : état, modèles, LoRA, galerie |
+| GET | `/api/gen/status`, `/api/gen/models?kind=image\|video`, `/api/gen/loras?model=`, `/api/gen/previews?kind=`, `/api/gen/outputs?kind=` | image / vidéo / musique : état, modèles, LoRA, images et fiches Civitai de l'arborescence, galerie |
 | POST | `/api/gen/engine/install`, `/api/gen/download`, `/api/music/install` | installation des moteurs et modèles |
 | POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/keep`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie (garder, supprimer) |
 | GET/POST | `/api/storage`, `/api/storage/delete` | espace disque |

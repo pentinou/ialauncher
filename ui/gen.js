@@ -4,7 +4,7 @@
 'use strict';
 
 const G = {
-  mode: 'text', status: null, models: {}, sel: {}, loras: {}, form: {}, inputs: {image: {}, video: {}}, viewing: {}, node: {}, families: {},
+  mode: 'text', status: null, models: {}, sel: {}, loras: {}, form: {}, inputs: {image: {}, video: {}}, viewing: {}, node: {}, families: {}, prev: {},
 };
 const SAMPLERS = ['euler', 'euler_a', 'heun', 'dpm2', 'dpm++2s_a', 'dpm++2m', 'dpm++2mv2', 'dpm++2m_sde', 'ipndm', 'ipndm_v', 'lcm', 'ddim_trailing', 'tcd', 'res_multistep', 'res_2s', 'er_sde', 'lms'];
 const SCHEDULERS = ['discrete', 'karras', 'exponential', 'ays', 'gits', 'sgm_uniform', 'simple', 'smoothstep', 'kl_optimal', 'beta'];
@@ -108,7 +108,22 @@ async function loadModels(kind) {
   }
   renderModels(kind);
   if (!G.sel[kind]) renderForm(kind);
+  loadPreviews(kind);
 }
+// Images et identité Civitai (nom, base) des modèles, checkpoints et LoRA : cherchées une fois, gardées en cache
+async function loadPreviews(kind) {
+  try { G.prev[kind] = await api('/api/gen/previews?kind=' + kind); } catch (e) { return; }
+  renderModels(kind);
+}
+const prevF = (kind, path) => ((G.prev[kind] || {}).files || {})[path];
+const prevB = (kind, base) => ((G.prev[kind] || {}).bases || {})[base];
+function pimg(kind, info) {
+  const adult = civState(kind).nsfw, im = info && (info.images || []).find(i => adult || i.nsfw <= 1);
+  return im ? im.url : '';
+}
+const baseOf = (kind, m) => m.base || (prevF(kind, m.path) || {}).baseModel || '';
+const ckImg = (kind, m) => m.local ? (m.image || pimg(kind, prevF(kind, m.path))) : pimg(kind, prevB(kind, m.base));
+
 // Arborescence en trois niveaux : modèle (famille) → checkpoint (les poids utilisés) → LoRA.
 // Un checkpoint Civitai ou de la WebUI se range sous le modèle dont il dérive ; un LoRA vaut
 // pour toute la famille, et d'abord pour les checkpoints de la même base que lui.
@@ -146,7 +161,9 @@ function renderModels(kind) {
     const state = e ? (e.installed ? `<span class="badge ok">✓ téléchargé</span> <span class="muted small">${fmtGB(e.size)}</span>`
       : `<button class="btn primary small" onclick="event.stopPropagation();downloadGenModel('${kind}','${e.id}')">⬇ Télécharger ${fmtGB(e.missing)}</button>`)
       : `<span class="muted small">${ck.length} checkpoint${ck.length > 1 ? 's' : ''} sur ce PC</span>`;
+    const img = e ? ckImg(kind, e) : ck.map(m => ckImg(kind, m)).find(Boolean);
     return `<div class="mcard ${n.key === cur.key ? 'sel' : ''} ${(e ? e.installed : nInst) ? '' : 'dim'}" data-key="${esc(n.key)}" onclick="pickNode('${kind}', this.dataset.key)">
+      <div class="mimg">${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : `<span>${esc(n.name.slice(0, 2))}</span>`}</div>
       <div class="n">${esc(n.name)}${e ? ` <span class="badge">${esc(e.license)}</span>` : ''}${e && e.added ? ` <span class="badge acc" title="ajouté ou validé dans l’onglet Mises à jour / Civitai">nouveau · ${esc(e.added)}</span>` : ''}</div>
       ${e ? `<div class="s">${e.tags.map(t => `<span class="badge" title="${esc((G.tags || {})[t] || '')}">${esc(t)}</span>`).join('')}</div>` : ''}
       <div class="blurb">${esc(e ? e.blurb : n.family === 'autre' ? 'Checkpoints dont l’architecture n’a pas été reconnue : sd.cpp la détectera au chargement.' : 'Checkpoints « tout-en-un » (un seul fichier) : ceux de votre WebUI, de vos dossiers et de Civitai.')}</div>
@@ -163,11 +180,12 @@ function renderModels(kind) {
   const items = (cur.entry ? [cur.entry] : []).concat(nodeCkpts(kind, cur));
   h += `<div class="tlevel">Checkpoint <span class="muted small">— les poids utilisés pour générer${cur.entry ? ' : ceux d’origine, ou une version retravaillée par la communauté' : ''}</span></div>`;
   h += items.length ? '<div class="ckgrid">' + items.map(m => {
-    const official = !m.local, on = sel && sel.id === m.id;
+    const official = !m.local, on = sel && sel.id === m.id, pv = official ? null : prevF(kind, m.path), img = ckImg(kind, m), base = baseOf(kind, m);
     return `<div class="ckpt ${on ? 'sel' : ''} ${m.installed ? '' : 'dim'}" data-id="${esc(m.id)}" onclick="selectGenModel('${kind}', this.dataset.id)" title="${esc((m.path || '') + (m.blurb ? '\n' + m.blurb : ''))}">
-      ${m.image ? `<img src="${esc(m.image)}" loading="lazy">` : `<div class="noimg">${official ? '★' : '◆'}</div>`}
+      ${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : `<div class="noimg">${official ? '★' : '◆'}</div>`}
       <div><div class="n">${on ? '✓ ' : ''}${official ? 'Poids d’origine' : esc(m.name)}${m.version ? ` <span class="muted small">${esc(m.version)}</span>` : ''}</div>
-        <div class="s">${m.base ? `<span class="badge acc">${esc(m.base)}</span>` : ''}<span>${fmtGB(m.size)}</span><span>${official ? esc(m.name) : esc(m.source)}</span>${m.installed ? '' : `<span class="badge warn">${official ? 'à télécharger (carte ci-dessus)' : 'modèle de base manquant'}</span>`}</div>
+        ${pv && pv.found && m.source !== 'Civitai' ? `<div class="small muted">Civitai : <a href="${esc(pv.url)}" target="_blank" onclick="event.stopPropagation()">${esc(pv.name)}${pv.version ? ' · ' + esc(pv.version) : ''} ↗</a></div>` : ''}
+        <div class="s">${base ? `<span class="badge acc">${esc(base)}</span>` : ''}<span>${fmtGB(m.size)}</span><span>${official ? esc(m.name) : esc(m.source)}</span>${m.installed ? '' : `<span class="badge warn">${official ? 'à télécharger (carte ci-dessus)' : 'modèle de base manquant'}</span>`}</div>
         ${official ? `<details class="small muted" onclick="event.stopPropagation()"><summary>fichiers</summary>${m.files.map(f => `<div>${f.present ? '✓' : '·'} ${esc(f.label)} : <span class="mono">${esc(f.path.split('/').pop())}</span> (${fmtGB(f.size)})</div>`).join('')}</details>` : ''}</div>
     </div>`;
   }).join('') + '</div>' : '<p class="muted small">Aucun checkpoint de cette famille pour l’instant.</p>';
@@ -319,31 +337,44 @@ async function loadLoras(kind) {
   try { G.loras[m.id] = await api('/api/gen/loras?model=' + encodeURIComponent(m.id)); } catch (e) { return; }
   renderLoras(kind);
 }
+// LoRA complétés par leur fiche Civitai (base exacte, mots déclencheurs, image)
+function loraList(kind, m) {
+  return ((G.loras[m.id] || {}).loras || []).map((x, i) => {
+    const pv = prevF(kind, x.path) || {};
+    return {...x, i, pv, family: x.family || pv.family || '', base: x.base || pv.baseModel || '', words: x.words.length ? x.words : (pv.words || []).slice(0, 3)};
+  });
+}
 function renderLoras(kind) {
   const m = G.sel[kind], box = $('glora-' + kind); if (!box) return;
   const nodes = treeNodes(kind);
   if (!m || nodeOf(kind, m, nodes) !== nodes.find(n => n.key === G.node[kind])) { box.innerHTML = '<p class="muted small">Choisissez d’abord un checkpoint téléchargé ci-dessus.</p>'; return; }
   const l = G.loras[m.id]; if (!l) { box.innerHTML = '<p class="muted small">…</p>'; return; }
-  const fam = m.family || l.family, base = m.base || '';
-  const all = l.loras.map((x, i) => ({...x, i}));
+  const fam = m.family || l.family, base = baseOf(kind, m);
+  const all = loraList(kind, m);
   const same = all.filter(x => fam && x.family === fam && base && x.base === base);
   const near = all.filter(x => fam && x.family === fam && !(base && x.base === base));
   const other = all.filter(x => !fam || x.family !== fam);
   const prompt = (G.form[kind] || {}).prompt || '';
-  const chip = (x) => `<button class="chip ${prompt.includes('<lora:' + x.name + ':') ? 'on' : ''}" data-lora="${esc(x.name)}" title="${esc((famLabel(x.family) || 'famille inconnue') + (x.base ? ' · ' + x.base : '') + (x.words.length ? ' · mots déclencheurs : ' + x.words.join(', ') : '') + ' · ' + x.source)}" onclick="toggleLora('${kind}', ${x.i})">${esc(x.name)}${x.base ? ` <span class="muted">${esc(x.base)}</span>` : ''}</button>`;
+  const card = (x, dim) => {
+    const img = pimg(kind, x.pv);
+    return `<div class="lcard ${prompt.includes('<lora:' + x.name + ':') ? 'on' : ''} ${dim ? 'dim' : ''}" data-lora="${esc(x.name)}" onclick="toggleLora('${kind}', ${x.i})"
+      title="${esc(x.name + ' · ' + (famLabel(x.family) || 'famille inconnue') + (x.base ? ' · ' + x.base : '') + (x.words.length ? ' · mots déclencheurs : ' + x.words.join(', ') : '') + ' · ' + x.source)}">
+      ${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : '<div class="noimg">◇</div>'}
+      <div class="ln">${esc(x.pv.found ? x.pv.name : x.name)}</div><div class="lb">${esc(x.base || famLabel(x.family) || '?')}${x.pv.url ? ` · <a href="${esc(x.pv.url)}" target="_blank" onclick="event.stopPropagation()">↗</a>` : ''}</div></div>`;
+  };
   let h = '';
-  if (same.length) h += `<div class="small">Faits pour <b>${esc(base)}</b> :</div><div class="chips">${same.map(chip).join('')}</div>`;
-  if (near.length) h += `<div class="small">${same.length ? 'Autres' : 'LoRA'} de la famille ${esc(famLabel(fam))}${base && same.length ? ' — à essayer' : ''} :</div><div class="chips">${near.map(chip).join('')}</div>`;
+  if (same.length) h += `<div class="small">Faits pour <b>${esc(base)}</b> :</div><div class="lgrid">${same.map(x => card(x)).join('')}</div>`;
+  if (near.length) h += `<div class="small">${same.length ? 'Autres' : 'LoRA'} de la famille ${esc(famLabel(fam))}${base && same.length ? ' — à essayer' : ''} :</div><div class="lgrid">${near.map(x => card(x)).join('')}</div>`;
   if (!same.length && !near.length) h += `<p class="muted small">Aucun LoRA ${esc(famLabel(fam) || '')} pour l’instant.</p>`;
-  if (other.length) h += `<details class="small"><summary class="muted">autres familles / famille inconnue (${other.length}) — sans effet ou imprévisibles sur ce modèle</summary><div class="chips">${other.map(chip).join('')}</div></details>`;
+  if (other.length) h += `<details class="small"><summary class="muted">autres familles / famille inconnue (${other.length}) — sans effet ou imprévisibles sur ce modèle</summary><div class="lgrid">${other.map(x => card(x, true)).join('')}</div></details>`;
   box.innerHTML = h + `<div class="muted small">Dossier : <span class="mono">${esc(l.dir)}</span> (y compris ceux de votre WebUI, par liens).</div>`;
 }
 function markLoras(kind) {
   const prompt = (G.form[kind] || {}).prompt || '';
-  document.querySelectorAll(`#glora-${kind} .chip`).forEach(c => c.classList.toggle('on', prompt.includes('<lora:' + c.dataset.lora + ':')));
+  document.querySelectorAll(`#glora-${kind} [data-lora]`).forEach(c => c.classList.toggle('on', prompt.includes('<lora:' + c.dataset.lora + ':')));
 }
 function toggleLora(kind, i) {
-  const m = G.sel[kind], x = G.loras[m.id].loras[i], f = G.form[kind];
+  const m = G.sel[kind], x = loraList(kind, m)[i], f = G.form[kind];
   const rx = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tag = new RegExp('\\s*<lora:' + rx(x.name) + ':[^>]*>', 'g');
   // retirer aussi les mots déclencheurs ajoutés avec lui (juste avant la balise)
@@ -358,7 +389,7 @@ const famLabel = (f) => (G.families[f] || {}).label || '';
 
 // ------------------------------------------------------------------ Civitai
 function civitaiPanel(kind) {
-  const c = G.civ && G.civ[kind] || {};
+  const c = civState(kind);
   const fams = Object.keys(G.families).filter(f => G.families[f].civitai.length && (G.families[f].kind === 'video') === (kind === 'video'));
   return `<details class="civ" id="civ-${kind}" ${c.open ? 'open' : ''} ontoggle="civState('${kind}').open = this.open">
     <summary>🔎 Chercher sur Civitai — modèles de base, checkpoints et LoRA partagés par la communauté</summary>
@@ -369,12 +400,13 @@ function civitaiPanel(kind) {
       <select id="civt-${kind}" onchange="$('civf-${kind}').disabled = this.value === 'Base'">${(kind === 'video' ? [['LORA', 'LoRA'], ['Base', 'Modèles de base']] : [['Checkpoint', 'Checkpoints'], ['LORA', 'LoRA'], ['Base', 'Modèles de base']]).map(([v, l]) => `<option value="${v}" ${c.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="civf-${kind}" ${c.type === 'Base' ? 'disabled' : ''}><option value="">toutes les familles compatibles</option>${fams.map(f => `<option value="${f}" ${c.family === f ? 'selected' : ''}>${esc(G.families[f].label)}</option>`).join('')}</select>
       <select id="civs-${kind}">${['Most Downloaded', 'Highest Rated', 'Newest'].map((v, i) => `<option value="${v}" ${c.sort === v ? 'selected' : ''}>${['les plus téléchargés', 'les mieux notés', 'les plus récents'][i]}</option>`).join('')}</select>
-      <label class="switch small"><input type="checkbox" id="civn-${kind}" ${c.nsfw ? 'checked' : ''}> contenu adulte</label>
+      <label class="switch small"><input type="checkbox" id="civn-${kind}" ${c.nsfw ? 'checked' : ''} onchange="setNsfw('${kind}', this.checked)"> contenu adulte</label>
       <button class="btn" onclick="civSearch('${kind}')">chercher</button>
     </div>
     <div id="civr-${kind}"></div><div id="civfiche-${kind}"></div></details>`;
 }
-function civState(kind) { G.civ = G.civ || {}; return G.civ[kind] = G.civ[kind] || {}; }
+function civState(kind) { G.civ = G.civ || {}; return G.civ[kind] = G.civ[kind] || {nsfw: LS.get('nsfw', false)}; }
+function setNsfw(kind, v) { civState(kind).nsfw = v; LS.set('nsfw', v); renderModels(kind); }
 async function civSearch(kind, more) {
   const c = civState(kind);
   if (!more) Object.assign(c, {q: $('civq-' + kind).value.trim(), type: $('civt-' + kind).value, family: $('civf-' + kind).value,
