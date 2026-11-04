@@ -14,12 +14,14 @@ Pour l'image et la vidéo, un modèle a besoin d'un encodeur de texte, d'un VAE 
 réglages : la fiche est pré-remplie d'après la documentation de stable-diffusion.cpp
 qui cite le dépôt (fichiers, ligne de commande d'exemple), puis vérifiée par l'utilisateur."""
 import json
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from html import unescape
 from urllib.error import HTTPError
 from urllib.parse import quote
 
@@ -35,7 +37,7 @@ SCAN_TTL = 6 * 3600
 
 # ---------------------------------------------------------------- catalogue utilisateur
 
-_BUILTIN = {"llm": list(catalog.CATALOG), "gen": list(gen_catalog.CATALOG)}
+_BUILTIN = {"llm": list(catalog.CATALOG), "gen": list(gen_catalog.CATALOG), "families": dict(gen_catalog.FAMILIES)}
 
 
 def _user_file():
@@ -77,6 +79,14 @@ def apply_user():
             gen[i] = {**gen[i], "hidden": True, "replaced_by": e["id"]}
             gen.insert(i + 1, e)
     gen_catalog.CATALOG[:] = gen
+    # modèles de base ajoutés depuis Civitai : leur famille devient cherchable (checkpoints, LoRA)
+    fams = dict(_BUILTIN["families"])
+    for e in u["gen"]:
+        if e.get("civitai") and e["family"] not in fams:
+            fams[e["family"]] = {"label": e.get("family_label") or e["name"], "civitai": e["civitai"],
+                                 "companion": e["id"], "lora_only": e["kind"] == "video"}
+    gen_catalog.FAMILIES.clear()
+    gen_catalog.FAMILIES.update(fams)
 
 
 apply_user()
@@ -365,7 +375,8 @@ QRE = re.compile(r"(?i)(?<![a-z0-9])(?:ud-)?(?:iq\d_[a-z]+|q\d_k(?:_[a-z]+)?|q\d
 EXT = re.compile(r"\.(gguf|safetensors|ckpt|sft|pt|bin)$", re.I)
 FLAG_ROLE = {"-m": "model", "--model": "model", "--diffusion-model": "diffusion_model",
              "--high-noise-diffusion-model": "high_noise", "--vae": "vae", "--audio-vae": "audio_vae",
-             "--llm": "llm", "--llm_vision": "llm_vision", "--llm-vision": "llm_vision", "--t5xxl": "t5xxl"}
+             "--llm": "llm", "--llm_vision": "llm_vision", "--llm-vision": "llm_vision", "--t5xxl": "t5xxl",
+             "--tokenizer": "tokenizer"}
 FLAG_DEF = {"--cfg-scale": ("cfg", float), "--steps": ("steps", int), "--sampling-method": ("sampler", str),
             "--flow-shift": ("flow_shift", float), "--video-frames": ("frames", int), "--fps": ("fps", int),
             "--scheduler": ("scheduler", str), "--high-noise-steps": ("high_noise_steps", int)}
@@ -636,17 +647,8 @@ def prefill(ref_id, repo, kind="version"):
     if not cmds:
         feats = set(pred.get("features", []))
     # 5. le moteur installé connaît-il ce modèle ?
-    b = sdcpp.current_bin()
-    tag = engine._marker(b).get("tag", "") if b else ""
-    if doc_name and tag.count("-") >= 2:
-        try:
-            download.fetch_text(f"{SD_RAW}/{tag.rsplit('-', 1)[1]}/docs/{doc_name}")
-        except HTTPError as e:
-            if e.code == 404:
-                warnings.append(f"Votre stable-diffusion.cpp ({tag}) est antérieur à ce modèle : mettez-le à jour "
-                                "(section Moteurs ci-dessus) avant de l'utiliser.")
-        except Exception:  # noqa: BLE001
-            pass
+    if doc_name:
+        warnings += _engine_warning(doc_name)
     card = info.get("cardData") or {}
     lic = re.search(r"^\s*-\s*([^:\n]*Licen[sc]e[^:\n]*)", readme, re.M | re.I)
     intro = next((p.strip() for p in re.split(r"\n\s*\n", re.sub(r"^#.*$", "", doc, flags=re.M))
@@ -658,6 +660,164 @@ def prefill(ref_id, repo, kind="version"):
             "blurb": f"Successeur de « {pred['name']} »." + (f" {intro}" if intro else ""),
             "files": files, "defaults": d, "features": sorted(feats), "server_args": pred.get("server_args", []) if not cmds else [],
             "doc": {"name": doc_name, "url": f"https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/{doc_name}"} if doc_name else None,
+            "warnings": warnings, "notes": notes}
+
+def _engine_warning(doc_name):
+    """La doc du modèle existe-t-elle déjà dans la version de sd.cpp installée ?"""
+    b = sdcpp.current_bin()
+    tag = engine._marker(b).get("tag", "") if b else ""
+    if tag.count("-") >= 2:
+        try:
+            download.fetch_text(f"{SD_RAW}/{tag.rsplit('-', 1)[1]}/docs/{doc_name}")
+        except HTTPError as e:
+            if e.code == 404:
+                return [f"Votre stable-diffusion.cpp ({tag}) est antérieur à ce modèle : mettez-le à jour "
+                        "(onglet Mises à jour, section Moteurs) avant de l'utiliser."]
+        except Exception:  # noqa: BLE001
+            pass
+    return []
+
+
+# ---------------------------------------------------------------- modèle de base trouvé sur Civitai
+
+def _stem(s):
+    """« MOSS Image » / moss_image.md → « moss » : on compare sans ponctuation ni le mot image."""
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"\.md$", "", s.lower()).replace("image", ""))
+
+
+def base_docs(base_models):
+    """{modèle de base Civitai: doc sd.cpp} pour ceux que sd.cpp documente (doc avec une ligne
+    de commande d'exemple). Rapprochement par nom : exact, sinon l'un préfixe de l'autre."""
+    docs = {n: _stem(n) for n, t in _sd_docs().items() if any(c["full"] for c in _commands(t))}
+    out = {}
+    for b in base_models:
+        n = _stem(b)
+        best = None
+        for doc, st in docs.items():
+            if not st:
+                continue
+            if n == st:
+                key = (2, len(st))
+            elif (n.startswith(st) and len(st) >= 4) or (st.startswith(n) and len(n) >= 4):
+                key = (1, len(os.path.commonprefix([n, st])))
+            else:
+                continue
+            if best is None or key > best[0]:
+                best = (key, doc)
+        if best:
+            out[b] = best[1]
+    return out
+
+
+def doc_kind(doc_name):
+    """« video » si les exemples de la doc génèrent une vidéo, sinon « image »."""
+    cmds = _commands(_sd_docs().get(doc_name, ""))
+    return "video" if any("--video-frames" in c["flags"] or "vid_gen" in c["flags"].get("-M", []) for c in cmds) else "image"
+
+
+def _civitai_text(html):
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", html or ""))).strip()
+
+
+def prefill_base(model_id, version_id):
+    """Fiche d'un modèle de base vu sur Civitai (ex. MOSS Image) : fichiers et réglages pris
+    dans la doc de stable-diffusion.cpp (versions GGUF de Hugging Face qu'elle conseille)."""
+    m = download.fetch_json(f"https://civitai.com/api/v1/models/{int(model_id)}", timeout=40)
+    v = next((x for x in m.get("modelVersions", []) if x["id"] == int(version_id)), None) or m["modelVersions"][0]
+    base = v.get("baseModel", "")
+    doc_name = base_docs([base]).get(base)
+    if not doc_name:
+        raise ValueError(f"stable-diffusion.cpp ne documente pas « {base} » : le launcher ne sait pas le faire tourner")
+    doc = _sd_docs()[doc_name]
+    desc = _civitai_text(m.get("description"))
+    warnings, notes = [], []
+    # 1. l'exemple de la doc le plus proche de la version choisie (SFT, Base, Turbo…)
+    want = _toks(f"{base} {v.get('name', '')}")
+    cmds = [c for c in _commands(doc) if c["full"]]
+    cmd = max(cmds, key=lambda c: (len(want & (_toks(c["heading"]) | _toks(_main_file(c)))), -cmds.index(c)))
+    roles, defaults, feats, ignored = {}, {}, set(), set()
+    main = _norm(_main_file(cmd))
+    for c in cmds:
+        if _norm(_main_file(c)) == main:
+            for f, vals in c["flags"].items():
+                if f in FLAG_ROLE:
+                    roles.setdefault(FLAG_ROLE[f], re.split(r"[\\/]", vals[0])[-1])
+            _apply_flags({f: x for f, x in c["flags"].items() if f in FLAG_FEAT}, defaults, feats, ignored)
+    _apply_flags(cmd["flags"], defaults, feats, ignored)
+    if "model" in roles and "diffusion_model" in roles:
+        roles.pop("model")
+    video = doc_kind(doc_name) == "video"
+    # 2. un fichier par rôle : déjà sur le disque, sinon un lien de la doc (GGUF de préférence)
+    links = []
+    for lr, sub in re.findall(r"https://huggingface\.co/([\w.-]+/[\w.-]+)(?:/(?:tree|blob|resolve)/main/?([^\s)\]>]*))?", doc):
+        if (lr, sub) not in links:
+            links.append((lr, sub))
+    gated = {}
+    files = []
+    for role, hint in roles.items():
+        best, src = None, ""
+        for lr, sub in links:
+            if gated.setdefault(lr, bool(_info(lr).get("gated"))):
+                continue
+            try:
+                t = [x for x in _tree(lr) if x["path"].startswith(sub.strip("/"))]
+            except Exception:  # noqa: BLE001
+                continue
+            if role == "tokenizer":
+                hit = next((x for x in t if x["path"].split("/")[-1] == "tokenizer.json"), None)
+            else:
+                hit = _pick(t, hint, "Q8_0", need_match=True)
+            if not hit:
+                continue
+            key = (hit["path"].endswith(".gguf"), _sim(hit["path"], hint))
+            if best is None or key > best[0]:
+                best = (key, {"repo": lr, **hit})
+        f = best[1] if best else None
+        if f:
+            src = f"documentation sd.cpp ({doc_name})"
+            # même fichier déjà téléchargé pour un autre modèle (même nom, même taille) : rien à retélécharger
+            for e in gen_catalog.CATALOG:
+                for rr, ff, _ in e["files"].values():
+                    d = sdcpp._dest(rr, ff)
+                    if d.name == f["path"].split("/")[-1] and d.exists() and d.stat().st_size == f["size"]:
+                        f, src = {"repo": rr, "path": ff, "size": f["size"]}, f"déjà sur le disque (« {e['name']} »)"
+                        break
+                else:
+                    continue
+                break
+        files.append({"role": role, "label": gen_catalog.ROLE_LABELS.get(role, role), "hint": hint,
+                      "repo": f["repo"] if f else "", "file": f["path"] if f else "",
+                      "size": f["size"] if f else 0, "source": src or "à compléter"})
+        if not f:
+            warnings.append(f"{gen_catalog.ROLE_LABELS.get(role, role)} : aucun fichier trouvé pour « {hint} », à compléter.")
+    if any(gated.values()):
+        notes.append("Dépôts protégés (connexion Hugging Face requise) écartés : " + ", ".join(sorted(r for r, g in gated.items() if g)))
+    if ignored:
+        notes.append("Options de l'exemple non reprises par le launcher : " + ", ".join(sorted(ignored)))
+    # 3. réglages : l'exemple de la doc, complété par la description Civitai (« 50 steps with CFG 3 »)
+    d = {"width": 1024, "height": 1024, "steps": 20, "cfg": 1.0, "sampler": ""}
+    if video:
+        d.update({"width": 832, "height": 480, "frames": 33, "fps": 16, "flow_shift": 0})
+    d.update(defaults)
+    st = re.search(r"(\d{1,3})\s*(?:sampling\s*)?steps", desc, re.I)
+    if "steps" not in defaults and st:
+        d["steps"] = int(st.group(1))
+        notes.append(f"Étapes ({d['steps']}) reprises de la description Civitai.")
+    cf = re.search(r"CFG(?:\s*scale)?\s*(?:of\s*|=\s*)?(\d+(?:\.\d+)?)", desc, re.I)
+    if "cfg" not in defaults and cf:
+        d["cfg"] = float(cf.group(1))
+        notes.append(f"CFG ({d['cfg']:g}) repris de la description Civitai.")
+    d["negative"] = float(d["cfg"]) > 1
+    warnings += _engine_warning(doc_name)
+    diff = next((x for x in files if x["role"] in ("diffusion_model", "model") and x["repo"]), None)
+    card = (_info(diff["repo"]).get("cardData") or {}) if diff else {}
+    vname = v.get("name", "")
+    name = base if not vname or _toks(vname) <= _toks(base) else f"{base} {re.sub(re.escape(base), '', vname, flags=re.I).strip()}"
+    return {"replaces": None, "name": name, "kind": "video" if video else "image",
+            "license": card.get("license_name") or card.get("license") or "", "tags": [], "notice": "",
+            "blurb": desc[:500] + ("…" if len(desc) > 500 else ""), "files": files, "defaults": d,
+            "features": sorted(feats), "server_args": [], "civitai": [base], "family_label": base,
+            "doc": {"name": doc_name, "url": f"https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/{doc_name}"},
             "warnings": warnings, "notes": notes}
 
 # ---------------------------------------------------------------- validation
@@ -713,7 +873,8 @@ def accept(b):
             dflt[k] = bool(v)
         elif v not in (None, ""):
             dflt[k] = float(v) if k in ("cfg", "flow_shift") else int(float(v))
-    entry = {"id": nid, "family": nid, "kind": pred["kind"] if pred else e.get("kind", "image"), "name": e["name"].strip(),
+    fam = _slug(e["civitai"][0]) if e.get("civitai") else nid
+    entry = {"id": nid, "family": fam, "kind": pred["kind"] if pred else e.get("kind", "image"), "name": e["name"].strip(),
              "license": e.get("license", "").strip(), "tags": e.get("tags", []), "blurb": e.get("blurb", "").strip(),
              "files": files, "defaults": dflt, "features": e.get("features", []), "repo": e.get("repo", ""),
              "added": time.strftime("%d/%m/%Y"), "replaces": pred["id"] if pred else None}
@@ -721,6 +882,9 @@ def accept(b):
         entry["notice"] = e["notice"].strip()
     if e.get("server_args"):
         entry["server_args"] = e["server_args"]
+    if e.get("civitai"):
+        entry["civitai"] = [str(x) for x in e["civitai"]]
+        entry["family_label"] = str(e.get("family_label") or e["civitai"][0])
     u["gen"].append(entry)
     _save_user(u)
     return {"ok": True, "id": nid}

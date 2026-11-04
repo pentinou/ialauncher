@@ -232,6 +232,7 @@ def _civitai_checkpoints():
                     "name": meta.get("name") or p.stem, "version": meta.get("version", ""), "source": "Civitai",
                     "path": str(p), "size": p.stat().st_size, "arch": fam, "family": fam,
                     "companion": comp["id"] if comp else "", "defaults": defaults, "installed": comp_ok, "local": True,
+                    "base": meta.get("baseModel", ""),
                     "features": comp.get("features", []) if comp else [], "image": meta.get("image", ""), "url": meta.get("url", ""),
                     "blurb": (f"{meta.get('baseModel', '')} — " if meta else "") + (
                         f"utilise l'encodeur de texte et le VAE de « {comp['name']} »" + ("" if comp_ok else
@@ -284,12 +285,24 @@ def models(kind):
             continue
         files = _files_of(e)
         out.append({**{k: v for k, v in e.items() if k != "files"},
+                    "base": (e.get("civitai") or gen_catalog.FAMILIES.get(e["family"], {}).get("civitai") or [""])[0],
                     "files": [{"role": r, "label": gen_catalog.ROLE_LABELS[r], "path": p, "present": ok, "size": s}
                               for r, p, ok, s in files],
                     "size": sum(s for *_, s in files), "missing": sum(s for _, _, ok, s in files if not ok),
                     "installed": all(ok for _, _, ok, _ in files)})
     if kind == "image":
         out += local_checkpoints()
+    return out
+
+
+def families():
+    """Familles connues (catalogue + ajoutées depuis Civitai) et architectures des checkpoints locaux."""
+    out = {}
+    for k, f in gen_catalog.FAMILIES.items():
+        comp = gen_catalog.find(f.get("companion", "")) if f.get("companion") else None
+        out[k] = {"label": f["label"], "kind": comp["kind"] if comp else "image", "civitai": f["civitai"]}
+    for k, label in ARCH_LABELS.items():
+        out.setdefault(k, {"label": label, "kind": "image", "civitai": []})
     return out
 
 
@@ -365,7 +378,7 @@ def loras(model_id):
     for p in sorted(d.rglob("*"), key=lambda x: x.stem.lower()):
         if p.suffix.lower() in (".safetensors", ".ckpt", ".gguf") and p.is_file():
             fam, words = _lora_family(p)
-            items.append({"name": p.stem, "family": fam, "words": words,
+            items.append({"name": p.stem, "family": fam, "words": words, "base": _meta(p).get("baseModel", ""),
                           "source": p.relative_to(d).parts[0] if len(p.relative_to(d).parts) > 1 else "Civitai"})
     return {"dir": str(d), "loras": items, "family": (m or {}).get("family", "")}
 

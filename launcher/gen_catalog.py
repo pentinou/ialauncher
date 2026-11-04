@@ -16,11 +16,12 @@ ROLE_FLAGS = {
     "llm": "--llm",
     "llm_vision": "--llm_vision",
     "t5xxl": "--t5xxl",
+    "tokenizer": "--tokenizer",             # tokenizer.json externe (MOSS-Image)
 }
 ROLE_LABELS = {
     "model": "checkpoint", "diffusion_model": "modèle de diffusion", "high_noise": "modèle « bruit fort »",
     "vae": "VAE", "audio_vae": "VAE audio", "llm": "encodeur de texte", "llm_vision": "encodeur d'images",
-    "t5xxl": "encodeur de texte (UMT5)",
+    "t5xxl": "encodeur de texte (UMT5)", "tokenizer": "tokenizer",
 }
 
 GB = 1000 ** 3
@@ -159,7 +160,7 @@ FAMILIES = {
     "flux2klein9": {"label": "FLUX.2 klein 9B", "civitai": ["Flux.2 Klein 9B", "Flux.2 Klein 9B-base"], "companion": "flux2-klein-9b"},
     "qwen21": {"label": "Qwen-Image 2.1", "civitai": ["Qwen 2.1"], "companion": "qwen-image-2.1"},
     "anima": {"label": "Anima", "civitai": ["Anima"], "companion": "anima"},
-    "krea2": {"label": "Krea 2", "civitai": ["Krea 2"], "companion": "krea2-turbo"},
+    "krea2": {"label": "Krea 2", "civitai": ["Krea 2", "Krea 2 Turbo"], "companion": "krea2-turbo"},
     "wan5b": {"label": "Wan 2.2 5B", "civitai": ["Wan Video 2.2 TI2V-5B"], "companion": "wan2.2-ti2v-5b", "lora_only": True},
     "wan14b": {"label": "Wan 2.2 A14B", "civitai": ["Wan Video 2.2 T2V-A14B"], "companion": "wan2.2-t2v-a14b", "lora_only": True},
     "minimax": {"label": "MiniMax-H3", "civitai": ["MiniMax H3"], "companion": "minimax-h3", "lora_only": True},

@@ -235,6 +235,17 @@ aux États-Unis et en Corée du Sud sans autorisation écrite de MiniMax (formul
 launcher le rappelle et demande confirmation avant le téléchargement. Sur une carte de
 24 Go, il tourne en déchargeant ses poids en RAM : c'est lent.
 
+**Choisir un modèle : modèle → checkpoint → LoRA.** La section 1 des onglets Image et
+Vidéo se lit en trois niveaux. En haut, les modèles défilent horizontalement (flèches ‹ ›
+ou ← →) et celui qui est choisi est entouré d'un halo : ceux du catalogue, plus une carte
+par famille de checkpoints tout-en-un (SD 1.5, SDXL / Pony / Illustrious, SD 3.5…). En
+dessous, ses **checkpoints** : les poids d'origine, puis les versions retravaillées
+(Civitai, WebUI, vos dossiers) qui en dérivent. Enfin les **LoRA** : un LoRA est entraîné
+sur un modèle de base, il marche avec les checkpoints de sa famille ; ceux faits pour la
+même base que le checkpoint (Pony pour un checkpoint Pony…) sont en tête, les autres de la
+famille ensuite. Un clic ajoute le LoRA au prompt avec ses mots déclencheurs, un second
+l'en retire.
+
 **Stable Diffusion WebUI n'est pas nécessaire** : le moteur est stable-diffusion.cpp, que
 le launcher installe lui-même. Si une WebUI ou Forge est présente, ses fichiers sont
 simplement réutilisés :
@@ -258,7 +269,17 @@ charger sont proposées : SD 1.5, SDXL / Pony / Illustrious / NoobAI (checkpoint
 tout-en-un), Z-Image, FLUX.2 klein 9B, Qwen-Image 2.1, Anima, Krea 2 (le checkpoint
 Civitai ne contient que le modèle de diffusion : l'encodeur de texte et le VAE viennent
 du modèle de base du catalogue, à télécharger une fois), et les LoRA Wan 2.2 et
-MiniMax-H3 pour la vidéo. Civitai exige une **clé API** (compte gratuit,
+MiniMax-H3 pour la vidéo. Le type **« Modèles de base »** montre les familles que
+stable-diffusion.cpp documente mais que le launcher n'a pas encore (MOSS Image, FLUX.1,
+Chroma, Qwen-Image, FLUX.3 klein…), une carte par famille. « Préparer la fiche » lit la
+page de la documentation de sd.cpp (`docs/<modèle>.md`) : fichiers à prendre sur Hugging
+Face (GGUF de préférence, pas de clé Civitai nécessaire ; un fichier déjà téléchargé pour
+un autre modèle, même nom et même taille, est réutilisé), réglages de l'exemple complétés
+par la description Civitai (« 50 steps with CFG 3 »). Après validation, le modèle rejoint
+le catalogue (`catalog-user.json`), se télécharge, et sa famille devient cherchable :
+ses checkpoints et ses LoRA Civitai apparaissent alors dans les autres types. Le
+rapprochement entre le nom Civitai et la page de doc se fait par le nom : vérifiez la
+page citée sur la fiche (ex. « HiDream » est rapproché de la doc de HiDream-O1). Civitai exige une **clé API** (compte gratuit,
 civitai.com/user/account → API Keys) pour tout téléchargement ; elle est gardée dans
 `config.json`. Les fichiers au format pickle (`.ckpt`, `.pt`), qui peuvent exécuter du
 code à l'ouverture, ne sont pas proposés. Pour SDXL, le launcher télécharge une
@@ -497,7 +518,7 @@ launcher/
   sdcpp.py             image / vidéo : installation de stable-diffusion.cpp, modèles, checkpoints WebUI, génération
   gen_catalog.py       catalogue des modèles d'image et de vidéo (fichiers, réglages conseillés)
   music.py             musique : installation d'ACE-Step (uv), poids, génération
-  civitai.py           recherche et téléchargement de checkpoints / LoRA sur Civitai
+  civitai.py           recherche sur Civitai (modèles de base, checkpoints, LoRA) et téléchargement
   storage.py           espace disque : mesure et suppression
   updates.py           mises à jour : moteurs, nouvelles versions des modèles, fiches, catalogue utilisateur
 ui/
@@ -529,7 +550,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | POST | `/api/gen/engine/install`, `/api/gen/download`, `/api/music/install` | installation des moteurs et modèles |
 | POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/keep`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie (garder, supprimer) |
 | GET/POST | `/api/storage`, `/api/storage/delete` | espace disque |
-| GET/POST | `/api/civitai/search`, `/api/civitai/token`, `/api/civitai/download` | Civitai |
+| GET/POST | `/api/civitai/search` (`type` : Checkpoint, LORA, Base), `/api/civitai/base-prefill?model=&version=`, `/api/civitai/token`, `/api/civitai/download` | Civitai (`base-prefill` : fiche d'un modèle de base d'après la doc de sd.cpp) |
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
 | POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |

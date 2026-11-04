@@ -99,9 +99,15 @@ async function openFiche(i, j) {
   let f; try { f = await api(`/api/updates/prefill?ref=${encodeURIComponent(g.ref.key)}&repo=${encodeURIComponent(c.repo)}&type=${c.type}`); }
   catch (e) { box.innerHTML = `<div class="warn-item error">${esc(e.message)}</div>`; return; }
   U.fiches[`${i}-${j}`] = f;
-  const d = f.defaults, isV = f.kind === 'video', id = `${i}-${j}`;
+  const id = `${i}-${j}`;
+  box.innerHTML = ficheHtml(id, f, `<button class="btn primary" onclick="acceptFiche('${id}')">✓ Valider : remplacer « ${esc(g.ref.name)} »</button>
+      <button class="btn" onclick="$('fiche-${id}').innerHTML=''">annuler</button>`);
+}
+// Formulaire d'une fiche image / vidéo (aussi utilisé par « Modèles de base » de la recherche Civitai)
+function ficheHtml(id, f, buttons) {
+  const d = f.defaults, isV = f.kind === 'video';
   const num = (k, step) => `<input type="number" step="${step || 1}" data-def="${k}" value="${d[k] ?? ''}" style="width:80px">`;
-  box.innerHTML = `<div class="fiche" id="fiche-form-${id}">
+  return `<div class="fiche" id="fiche-form-${id}">
     ${f.warnings.map(w => `<div class="warn-item warn small">⚠ ${esc(w)}</div>`).join('')}
     ${f.notes.map(n => `<div class="muted small">ℹ ${esc(n)}</div>`).join('')}
     ${f.doc ? `<div class="small">Source : <a href="${esc(f.doc.url)}" target="_blank">docs/${esc(f.doc.name)}</a> de stable-diffusion.cpp — vérifiez la fiche avec elle.</div>` : ''}
@@ -121,16 +127,19 @@ async function openFiche(i, j) {
     <div class="grow"><label>Taille</label><div>${num('width', 16)} × ${num('height', 16)} px</div></div>
     ${isV ? `<div class="grow"><label>Vidéo</label><div>${num('frames')} images à ${num('fps')} i/s · flow shift ${num('flow_shift', 0.5)}</div></div>` : ''}
     <div class="grow"><label>Entrées</label><div>${Object.entries(FEATS).map(([k, l]) => `<label class="switch"><input type="checkbox" data-feat="${k}" ${f.features.includes(k) ? 'checked' : ''}> ${l}</label>`).join(' ')}</div></div>
-    <div class="row-inline" style="margin-top:10px"><button class="btn primary" onclick="acceptFiche('${id}')">✓ Valider : remplacer « ${esc(U.scan.groups[i].ref.name)} »</button>
-      <button class="btn" onclick="$('fiche-${id}').innerHTML=''">annuler</button></div></div>`;
+    <div class="row-inline" style="margin-top:10px">${buttons}</div></div>`;
 }
-async function acceptFiche(id) {
+function readFiche(id) {
   const f = U.fiches[id], form = $('fiche-form-' + id);
   const entry = {...f, defaults: {...f.defaults}, files: f.files.map(x => ({...x})), features: []};
   form.querySelectorAll('[data-k]').forEach(el => { entry[el.dataset.k] = el.value; });
   form.querySelectorAll('[data-file]').forEach(el => { entry.files[+el.dataset.file][el.dataset.part] = el.value.trim(); });
   form.querySelectorAll('[data-def]').forEach(el => { entry.defaults[el.dataset.def] = el.type === 'checkbox' ? el.checked : el.value; });
   form.querySelectorAll('[data-feat]').forEach(el => { if (el.checked) entry.features.push(el.dataset.feat); });
+  return entry;
+}
+async function acceptFiche(id) {
+  const f = U.fiches[id], entry = readFiche(id);
   let r; try { r = await api('/api/updates/accept', {kind: 'gen', entry}); } catch (e) { toast(e.message, 8000); return; }
   toast(`« ${entry.name} » remplace l’ancien modèle dans l’onglet ${f.kind === 'video' ? 'Vidéo' : 'Image'} (à télécharger)`, 6000);
   G.models = {}; scanUpdates(false); loadUserChoices();
