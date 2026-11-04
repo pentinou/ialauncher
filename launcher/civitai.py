@@ -8,7 +8,9 @@ métadonnées (famille, mots déclencheurs…) :
     diffusion/loras/         LoRA (dossier de LoRA commun, voir sdcpp.lora_dir)"""
 import json
 import shutil
+import time
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
 
 from . import paths, download, engine, gen_catalog
@@ -26,12 +28,64 @@ def set_token(t):
     engine.save_config(cfg)
 
 
+def new_bases():
+    """{modèle de base Civitai: doc sd.cpp} des familles que stable-diffusion.cpp sait faire tourner
+    et que le launcher n'a pas encore (« Modèles de base » de la recherche). Une variante d'une
+    famille déjà connue (« Krea 2 Turbo » à côté de « Krea 2 ») n'en est pas une nouvelle."""
+    from . import updates     # import tardif : updates importe sdcpp, qui n'a pas besoin de Civitai
+    cache = paths.cache_dir() / "civitai-enums.json"
+    try:
+        if time.time() - cache.stat().st_mtime > 86400:
+            raise OSError
+        names = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        names = download.fetch_json(f"{API}/enums", timeout=40)["BaseModel"]
+        cache.write_text(json.dumps(names))
+    known = [b for f in gen_catalog.FAMILIES.values() for b in f["civitai"]]
+    kstems = [updates._stem(b) for b in known]
+    kdocs = set(updates.base_docs(known).values())
+    out = {}
+    for b, doc in updates.base_docs([b for b in names if b not in known]).items():
+        st = updates._stem(b)
+        if doc in kdocs and any(st.startswith(k) or k.startswith(st) for k in kstems):
+            continue
+        out[b] = doc
+    return out
+
+
 def search(query="", kind="Checkpoint", family="", sort="Most Downloaded", nsfw=False, cursor=""):
-    """kind : Checkpoint | LORA ; family : clé de gen_catalog.FAMILIES, ou "" = toutes celles
-    que le launcher sait utiliser."""
-    fams = [family] if family else [k for k, f in gen_catalog.FAMILIES.items() if kind == "LORA" or not f.get("lora_only")]
-    q = [("limit", "24"), ("types", kind), ("sort", sort), ("nsfw", "true" if nsfw else "false")]
-    q += [("baseModels", b) for k in fams for b in gen_catalog.FAMILIES[k]["civitai"]]
+    """kind : Checkpoint | LORA | Base (modèles de base pas encore au catalogue) ; family : clé de
+    gen_catalog.FAMILIES, ou "" = toutes celles que le launcher sait utiliser."""
+    bases = new_bases() if kind == "Base" else {}
+    if kind == "Base" and not cursor:
+        # une carte par modèle de base (son checkpoint le plus téléchargé), sinon les dérivés
+        # de FLUX.1 remplissent toute la page ; un texte filtre sur le nom du modèle de base
+        norm = lambda t: "".join(ch for ch in t.lower() if ch.isalnum())     # noqa: E731
+        from . import updates
+        names = [b for b in bases if (not query or norm(query) in norm(b))
+                 and (family not in ("image", "video") or updates.doc_kind(bases[b]) == family)]
+        if names:
+            def top(b):
+                try:
+                    items = search("", "Base1", b, sort, nsfw)["items"][:1]
+                except Exception:  # noqa: BLE001
+                    return []
+                for i in items:     # la version faite pour ce modèle de base d'abord
+                    i["versions"].sort(key=lambda v: v["baseModel"] != b)
+                return items
+            with ThreadPoolExecutor(8) as ex:
+                items = [i for r in ex.map(top, names) for i in r]
+            items.sort(key=lambda i: -i["downloads"])
+            return {"items": items, "next": "", "has_token": bool(token())}
+    if kind == "Base1":     # le premier checkpoint d'un modèle de base donné (family = son nom Civitai)
+        bases = {family: new_bases().get(family, "")}
+    q = [("limit", "1" if kind == "Base1" else "24"), ("types", "Checkpoint" if kind in ("Base", "Base1") else kind),
+         ("sort", sort), ("nsfw", "true" if nsfw else "false")]
+    if kind in ("Base", "Base1"):
+        q += [("baseModels", b) for b in bases]
+    else:
+        fams = [family] if family else [k for k, f in gen_catalog.FAMILIES.items() if kind == "LORA" or not f.get("lora_only")]
+        q += [("baseModels", b) for k in fams for b in gen_catalog.FAMILIES[k]["civitai"]]
     if query:
         q.append(("query", query))
     if cursor:
@@ -49,6 +103,7 @@ def search(query="", kind="Checkpoint", family="", sort="Most Downloaded", nsfw=
                      and (f.get("metadata") or {}).get("format") in ("SafeTensor", "GGUF", None)]
             pickle = any((f.get("metadata") or {}).get("format") == "PickleTensor" for f in v.get("files", []))
             versions.append({"id": v["id"], "name": v.get("name", ""), "baseModel": v.get("baseModel", ""), "family": fam,
+                             "doc": bases.get(v.get("baseModel", ""), ""),
                              "files": files, "pickle_only": pickle and not files, "words": v.get("trainedWords") or [],
                              "image": _image(v.get("images") or [], nsfw)})
         if not versions:

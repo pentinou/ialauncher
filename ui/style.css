@@ -156,3 +156,30 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .genout .log pre,.card .log pre{max-height:200px}
 @media (max-width:900px){.srow{grid-template-columns:1fr 70px 80px}.srow .sbar{display:none}.genwrap{grid-template-columns:1fr}.genout{position:static}.modes{flex-wrap:wrap}.top{flex-wrap:wrap;gap:8px}}
 @media (max-width:900px){.layout{grid-template-columns:1fr}.side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}.setting{grid-template-columns:1fr}.setting .val{text-align:left}}
+/* sélection en arborescence : modèle (carrousel) → checkpoint → LoRA */
+.tlevel{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:14px 0 4px}
+.tlevel .small{text-transform:none;letter-spacing:0}
+.carwrap{display:flex;align-items:center;gap:4px}
+.carbtn{flex:0 0 auto;width:30px;height:60px;border-radius:8px;border:1px solid var(--line);background:var(--card2);color:var(--text);font-size:22px;cursor:pointer}
+.carbtn:hover{border-color:var(--acc);color:var(--acc)}
+.carousel{flex:1;display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x proximity;padding:18px 14px;outline:none;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.mcard{flex:0 0 270px;scroll-snap-align:center;display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--card2);cursor:pointer;transition:transform .2s,box-shadow .2s,border-color .2s}
+.mcard:hover{border-color:var(--acc);transform:translateY(-2px)}
+.mcard .n{font-weight:600}.mcard .s{display:flex;gap:4px;flex-wrap:wrap}
+.mcard .blurb{font-size:12px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.mcard .mfoot{margin-top:auto}
+.mcard.dim{opacity:.6}.mcard.dim:hover{opacity:.9}
+.mcard.sel{opacity:1;border-color:#9fd0ff;transform:translateY(-3px);
+  box-shadow:0 0 0 1px #9fd0ff,0 0 10px 1px var(--acc),0 0 26px 4px rgba(110,168,254,.45),inset 0 0 14px rgba(110,168,254,.18);
+  animation:neon 2.6s ease-in-out infinite alternate}
+@keyframes neon{to{box-shadow:0 0 0 1px #c4e2ff,0 0 16px 2px var(--acc),0 0 40px 8px rgba(110,168,254,.55),inset 0 0 18px rgba(110,168,254,.25)}}
+@media (prefers-reduced-motion:reduce){.mcard.sel{animation:none}.mcard,.mcard:hover{transition:none;transform:none}}
+.ckgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;padding:4px 2px 8px}
+.ckpt{display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:start;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--card2);cursor:pointer;transition:box-shadow .2s,border-color .2s}
+.ckpt:hover{border-color:var(--acc)}
+.ckpt img,.ckpt .noimg{width:52px;height:68px;object-fit:cover;border-radius:6px;background:var(--bg)}
+.ckpt .noimg{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:20px}
+.ckpt .n{font-weight:600;word-break:break-word}.ckpt .s{color:var(--muted);font-size:12px;display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.ckpt.dim{opacity:.55}
+.ckpt.sel{border-color:#9fd0ff;box-shadow:0 0 0 1px #9fd0ff,0 0 12px 2px rgba(110,168,254,.5)}
+.chip.on{border-color:#9fd0ff;color:#fff;background:rgba(110,168,254,.18);box-shadow:0 0 8px rgba(110,168,254,.55)}

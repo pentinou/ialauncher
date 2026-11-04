@@ -4,7 +4,7 @@
 'use strict';
 
 const G = {
-  mode: 'text', status: null, models: {}, sel: {}, loras: {}, form: {}, inputs: {image: {}, video: {}}, viewing: {},
+  mode: 'text', status: null, models: {}, sel: {}, loras: {}, form: {}, inputs: {image: {}, video: {}}, viewing: {}, node: {}, families: {},
 };
 const SAMPLERS = ['euler', 'euler_a', 'heun', 'dpm2', 'dpm++2s_a', 'dpm++2m', 'dpm++2mv2', 'dpm++2m_sde', 'ipndm', 'ipndm_v', 'lcm', 'ddim_trailing', 'tcd', 'res_multistep', 'res_2s', 'er_sde', 'lms'];
 const SCHEDULERS = ['discrete', 'karras', 'exponential', 'ays', 'gits', 'sgm_uniform', 'simple', 'smoothstep', 'kl_optimal', 'beta'];
@@ -41,7 +41,7 @@ function visualSkeleton(kind) {
     <p class="lead">Le « llama.cpp de l'image » : même bibliothèque (ggml), mêmes fichiers GGUF quantifiés, compilé pour votre carte. Il lit aussi vos checkpoints de Stable Diffusion WebUI / Forge, sans ComfyUI ni Python. Le launcher lance <code>sd-server</code> en arrière-plan et lui envoie vos réglages.</p>
     <div id="sd-engine-${kind}"></div></section>
   <section class="card"><h1><span class="num">1</span> Modèle</h1>
-    <p class="lead">${isV ? 'Un modèle vidéo = un transformer de diffusion + un encodeur de texte + un VAE (qui décode les images latentes en pixels). Le launcher télécharge les trois.' : 'Tous ces modèles tournent dans le même moteur (stable-diffusion.cpp, ci-dessus) : choisissez-en un, il est chargé à la première génération.'}</p>
+    <p class="lead">${isV ? 'Un modèle vidéo = un transformer de diffusion + un encodeur de texte + un VAE (qui décode les images latentes en pixels). Le launcher télécharge les trois.' : 'Tous ces modèles tournent dans le même moteur (stable-diffusion.cpp, ci-dessus).'} Choisissez un modèle, puis ses poids (checkpoint), puis d’éventuels LoRA. Il manque un modèle ? « Chercher sur Civitai », type « Modèles de base ».</p>
     <div id="gm-${kind}"></div></section>
   <section class="card"><h1><span class="num">2</span> ${isV ? 'Générer une vidéo' : 'Générer'}</h1>
     <div id="gsvc-${kind}" class="small muted"></div>
@@ -98,8 +98,9 @@ async function stopService(svc) { await api('/api/gen/stop', {service: svc}); re
 
 // ------------------------------------------------------------------ modèles
 async function loadModels(kind) {
-  try { const r = await api('/api/gen/models?kind=' + kind); G.models[kind] = r.models; G.tags = r.tags; G.webui = r.webui; }
+  try { const r = await api('/api/gen/models?kind=' + kind); G.models[kind] = r.models; G.tags = r.tags; G.webui = r.webui; G.families = r.families; }
   catch (e) { $('gm-' + kind).innerHTML = `<div class="warn-item error">${esc(e.message)}</div>`; return; }
+  if (!G.node[kind]) G.node[kind] = LS.get('node.' + kind);
   if (!G.sel[kind]) {
     const saved = LS.get('model.' + kind);
     const m = G.models[kind].find(x => x.id === saved) || G.models[kind].find(x => x.installed && !x.local) || null;
@@ -108,36 +109,105 @@ async function loadModels(kind) {
   renderModels(kind);
   if (!G.sel[kind]) renderForm(kind);
 }
+// Arborescence en trois niveaux : modèle (famille) → checkpoint (les poids utilisés) → LoRA.
+// Un checkpoint Civitai ou de la WebUI se range sous le modèle dont il dérive ; un LoRA vaut
+// pour toute la famille, et d'abord pour les checkpoints de la même base que lui.
+function treeNodes(kind) {
+  const list = G.models[kind] || [];
+  const nodes = list.filter(m => !m.local).map(m => ({key: m.id, entry: m, family: m.family, name: m.name}));
+  const fams = new Set(nodes.map(n => n.family)), extra = {};
+  for (const m of list.filter(x => x.local)) {
+    const f = m.family || m.arch || 'autre';
+    if (!fams.has(f)) (extra[f] = extra[f] || []).push(m);
+  }
+  if (kind === 'image') ['sdxl', 'sd15'].forEach(f => { extra[f] = extra[f] || []; });
+  for (const f of Object.keys(extra)) nodes.push({key: 'fam:' + f, family: f, name: famLabel(f) || 'Autres checkpoints'});
+  // d'abord ce qui est utilisable tout de suite
+  const ready = n => n.entry ? n.entry.installed : nodeCkpts(kind, n).some(m => m.installed);
+  return nodes.map((n, i) => [n, i]).sort((a, b) => (ready(b[0]) - ready(a[0])) || a[1] - b[1]).map(x => x[0]);
+}
+function nodeCkpts(kind, n) {
+  return (G.models[kind] || []).filter(m => m.local && (m.family || m.arch || 'autre') === n.family);
+}
+function nodeOf(kind, m, nodes) {
+  if (!m) return null;
+  return nodes.find(n => n.key === m.id) || nodes.find(n => m.local && n.family === (m.family || m.arch || 'autre'));
+}
 function renderModels(kind) {
-  const list = G.models[kind] || [], sel = G.sel[kind];
-  const cat = list.filter(m => !m.local), loc = list.filter(m => m.local);
-  let h = `<h3 class="small muted" style="margin:4px 0 6px">CATALOGUE — MODÈLES À TÉLÉCHARGER</h3>
-    <p class="small muted" style="margin:0 0 8px">Chacun se compose de plusieurs fichiers, téléchargés ensemble : le modèle de diffusion, un encodeur de texte (petit LLM) et un VAE. Ils servent aussi de base aux checkpoints Civitai de leur famille.</p>` + '<div class="cat">' + cat.map(m => `
-    <div class="mitem ${sel && sel.id === m.id ? 'sel' : ''}">
-      <div class="n">${esc(m.name)} <span class="badge">${esc(m.license)}</span>${m.added ? ` <span class="badge acc" title="validé dans l’onglet Mises à jour">nouveau · ${esc(m.added)}</span>` : ''}</div>
-      <div class="s">${m.tags.map(t => `<span class="badge" title="${esc((G.tags || {})[t] || '')}">${esc(t)}</span>`).join('')}<span>${fmtGB(m.size)} au total</span></div>
-      <div class="blurb">${esc(m.blurb)}</div>
-      ${m.notice ? `<div class="warn-item warn small">⚠ ${esc(m.notice)}</div>` : ''}
-      <details class="small muted"><summary>fichiers</summary>${m.files.map(f => `<div>${f.present ? '✓' : '·'} ${esc(f.label)} : <span class="mono">${esc(f.path.split('/').pop())}</span> (${fmtGB(f.size)})</div>`).join('')}</details>
-      <div class="row-inline">${m.installed
-        ? `<button class="btn ${sel && sel.id === m.id ? '' : 'primary'} small" onclick="selectGenModel('${kind}','${m.id}')">${sel && sel.id === m.id ? '✓ sélectionné' : 'Utiliser'}</button>`
-        : `<button class="btn primary small" onclick="downloadGenModel('${kind}','${m.id}')">⬇ Télécharger ${fmtGB(m.missing)}</button>`}</div>
-      <div id="gdl-${m.id}"></div>
-    </div>`).join('') + '</div>';
+  const nodes = treeNodes(kind), sel = G.sel[kind];
+  G.node = G.node || {};
+  const cur = nodes.find(n => n.key === G.node[kind]) || nodeOf(kind, sel, nodes) || nodes[0];
+  if (!cur) { $('gm-' + kind).innerHTML = '<p class="muted">Aucun modèle.</p>'; return; }
+  G.node[kind] = cur.key;
+  const fam = G.families[cur.family] || {};
+  const card = (n) => {
+    const e = n.entry, ck = nodeCkpts(kind, n);
+    const nInst = ck.filter(m => m.installed).length;
+    const state = e ? (e.installed ? `<span class="badge ok">✓ téléchargé</span> <span class="muted small">${fmtGB(e.size)}</span>`
+      : `<button class="btn primary small" onclick="event.stopPropagation();downloadGenModel('${kind}','${e.id}')">⬇ Télécharger ${fmtGB(e.missing)}</button>`)
+      : `<span class="muted small">${ck.length} checkpoint${ck.length > 1 ? 's' : ''} sur ce PC</span>`;
+    return `<div class="mcard ${n.key === cur.key ? 'sel' : ''} ${(e ? e.installed : nInst) ? '' : 'dim'}" data-key="${esc(n.key)}" onclick="pickNode('${kind}', this.dataset.key)">
+      <div class="n">${esc(n.name)}${e ? ` <span class="badge">${esc(e.license)}</span>` : ''}${e && e.added ? ` <span class="badge acc" title="ajouté ou validé dans l’onglet Mises à jour / Civitai">nouveau · ${esc(e.added)}</span>` : ''}</div>
+      ${e ? `<div class="s">${e.tags.map(t => `<span class="badge" title="${esc((G.tags || {})[t] || '')}">${esc(t)}</span>`).join('')}</div>` : ''}
+      <div class="blurb">${esc(e ? e.blurb : n.family === 'autre' ? 'Checkpoints dont l’architecture n’a pas été reconnue : sd.cpp la détectera au chargement.' : 'Checkpoints « tout-en-un » (un seul fichier) : ceux de votre WebUI, de vos dossiers et de Civitai.')}</div>
+      ${e && e.notice ? `<div class="warn-item warn small">⚠ ${esc(e.notice)}</div>` : ''}
+      <div class="mfoot">${state}${nInst && e ? ` <span class="muted small">+ ${nInst} checkpoint${nInst > 1 ? 's' : ''}</span>` : ''}</div>
+      ${e ? `<div id="gdl-${e.id}" onclick="event.stopPropagation()"></div>` : ''}
+    </div>`;
+  };
+  let h = `<div class="tlevel">Modèle <span class="muted small">— ${nodes.length} familles · ← → pour parcourir</span></div>
+    <div class="carwrap"><button class="carbtn" onclick="stepNode('${kind}',-1)" title="précédent">‹</button>
+    <div class="carousel" id="car-${kind}" tabindex="0" onkeydown="if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();stepNode('${kind}',event.key==='ArrowLeft'?-1:1)}">${nodes.map(card).join('')}</div>
+    <button class="carbtn" onclick="stepNode('${kind}',1)" title="suivant">›</button></div>`;
+  // niveau 2 : checkpoints du modèle choisi
+  const items = (cur.entry ? [cur.entry] : []).concat(nodeCkpts(kind, cur));
+  h += `<div class="tlevel">Checkpoint <span class="muted small">— les poids utilisés pour générer${cur.entry ? ' : ceux d’origine, ou une version retravaillée par la communauté' : ''}</span></div>`;
+  h += items.length ? '<div class="ckgrid">' + items.map(m => {
+    const official = !m.local, on = sel && sel.id === m.id;
+    return `<div class="ckpt ${on ? 'sel' : ''} ${m.installed ? '' : 'dim'}" data-id="${esc(m.id)}" onclick="selectGenModel('${kind}', this.dataset.id)" title="${esc((m.path || '') + (m.blurb ? '\n' + m.blurb : ''))}">
+      ${m.image ? `<img src="${esc(m.image)}" loading="lazy">` : `<div class="noimg">${official ? '★' : '◆'}</div>`}
+      <div><div class="n">${on ? '✓ ' : ''}${official ? 'Poids d’origine' : esc(m.name)}${m.version ? ` <span class="muted small">${esc(m.version)}</span>` : ''}</div>
+        <div class="s">${m.base ? `<span class="badge acc">${esc(m.base)}</span>` : ''}<span>${fmtGB(m.size)}</span><span>${official ? esc(m.name) : esc(m.source)}</span>${m.installed ? '' : `<span class="badge warn">${official ? 'à télécharger (carte ci-dessus)' : 'modèle de base manquant'}</span>`}</div>
+        ${official ? `<details class="small muted" onclick="event.stopPropagation()"><summary>fichiers</summary>${m.files.map(f => `<div>${f.present ? '✓' : '·'} ${esc(f.label)} : <span class="mono">${esc(f.path.split('/').pop())}</span> (${fmtGB(f.size)})</div>`).join('')}</details>` : ''}</div>
+    </div>`;
+  }).join('') + '</div>' : '<p class="muted small">Aucun checkpoint de cette famille pour l’instant.</p>';
+  const civFam = fam.civitai && fam.civitai.length && G.families[cur.family] ? cur.family : '';
+  if (civFam && kind === 'image') h += `<button class="link small" onclick="civOpen('${kind}','Checkpoint','${civFam}')">🔎 chercher des checkpoints ${esc(fam.label)} sur Civitai</button>`;
+  // niveau 3 : LoRA
+  h += `<div class="tlevel">LoRA <span class="muted small">— un LoRA est entraîné sur un modèle de base : il marche avec les checkpoints de sa famille, d’abord ceux de la même base. Cliquez pour l’ajouter au prompt (ou l’en retirer).</span></div>
+    <div id="glora-${kind}"></div>`;
+  if (civFam) h += `<button class="link small" onclick="civOpen('${kind}','LORA','${civFam}')">🔎 chercher des LoRA ${esc(fam.label)} sur Civitai</button>`;
   if (kind === 'image') {
-    h += `<h3 class="small muted" style="margin:16px 0 6px">DÉJÀ SUR CE PC — CHECKPOINTS${G.webui && G.webui.length ? ' (' + esc(G.webui.map(w => w.split('/').pop()).join(', ')) + ', Civitai)' : ''}</h3>
-      <p class="small muted" style="margin:0 0 8px">Checkpoints SD 1.5 / SDXL / Pony tout-en-un (un seul fichier), lus en place, et ceux téléchargés depuis Civitai. Le programme Stable Diffusion WebUI n’est pas utilisé, seulement ses fichiers.</p>`;
-    h += loc.length ? '<div class="mlist compact">' + loc.map(m => `
-      <div class="mitem ${sel && sel.id === m.id ? 'sel' : ''} ${m.installed ? '' : 'dim'}" onclick="selectGenModel('${kind}','${m.id}')" title="${esc(m.path + '\n' + (m.blurb || ''))}">
-        <div class="n">${esc(m.name)}${m.version ? ` <span class="muted small">${esc(m.version)}</span>` : ''}</div>
-        <div class="s"><span class="badge acc">${esc(famLabel(m.family) || m.arch || '?')}</span><span>${fmtGB(m.size)}</span><span>${esc(m.source)}</span>${m.installed ? '' : '<span class="badge warn">modèle de base manquant</span>'}</div>
-      </div>`).join('') + '</div>' : '<p class="muted small">Aucun checkpoint : cherchez-en sur Civitai ci-dessous, ou utilisez le catalogue. (Les dossiers de Stable Diffusion WebUI et Forge sont repris automatiquement s’ils existent, mais ne sont pas nécessaires.)</p>';
-    h += `<div class="row-inline muted small"><span>Ajouter un dossier de checkpoints :</span><input id="gen-add-dir" placeholder="/chemin/vers/dossier" size="40"><button class="btn small" onclick="addGenDir()">ajouter</button></div>`;
+    h += `<div class="row-inline muted small" style="margin-top:12px"><span>Checkpoints déjà sur ce PC ${G.webui && G.webui.length ? '(repris de ' + esc(G.webui.map(w => w.split('/').pop()).join(', ')) + ')' : ''} — ajouter un dossier :</span><input id="gen-add-dir" placeholder="/chemin/vers/dossier" size="34"><button class="btn small" onclick="addGenDir()">ajouter</button></div>`;
   }
   h += `<div class="small muted" style="margin-top:6px">${S.hw ? fmtGB(S.hw.disk.free) + ' libres sur le disque · ' : ''}<button class="link" onclick="showMode('storage')">voir et libérer l’espace occupé →</button></div>`;
   h += civitaiPanel(kind);
+  const old = $('car-' + kind), left = old ? old.scrollLeft : 0;
   $('gm-' + kind).innerHTML = h;
+  const car = $('car-' + kind);
+  car.scrollLeft = left;
+  const sc = car.querySelector('.mcard.sel');
+  if (sc && (sc.offsetLeft < car.scrollLeft || sc.offsetLeft + sc.offsetWidth > car.scrollLeft + car.clientWidth)) {
+    car.scrollTo({left: sc.offsetLeft - (car.clientWidth - sc.offsetWidth) / 2, behavior: 'smooth'});
+  }
+  renderLoras(kind);
   renderCivitai(kind);
+}
+function pickNode(kind, key) {
+  G.node[kind] = key; LS.set('node.' + kind, key);
+  const nodes = treeNodes(kind), n = nodes.find(x => x.key === key), sel = G.sel[kind];
+  const inNode = sel && nodeOf(kind, sel, nodes) === n;
+  if (!inNode) {
+    const first = n.entry && n.entry.installed ? n.entry : nodeCkpts(kind, n).find(m => m.installed);
+    if (first) { selectGenModel(kind, first.id); return; }
+  }
+  renderModels(kind);
+}
+function stepNode(kind, d) {
+  const nodes = treeNodes(kind), i = nodes.findIndex(n => n.key === G.node[kind]);
+  const n = nodes[(i + d + nodes.length) % nodes.length];
+  pickNode(kind, n.key);
+  const car = $('car-' + kind); if (car) car.focus({preventScroll: true});
 }
 const fmtGB = (b) => (b / 1e9).toFixed(b < 1e9 ? 2 : 1).replace('.', ',') + ' Go';
 async function addGenDir() {
@@ -157,6 +227,7 @@ function selectGenModel(kind, id, silent) {
   if (!m.installed) { toast(m.companion ? m.blurb : 'Téléchargez d’abord ce modèle', 6000); return; }
   G.sel[kind] = m;
   LS.set('model.' + kind, id);
+  const nd = nodeOf(kind, m, treeNodes(kind)); if (nd) { G.node[kind] = nd.key; LS.set('node.' + kind, nd.key); }
   const d = m.defaults || {};
   const f = G.form[kind] = Object.assign({prompt: '', negative: '', seed: -1, batch: 1, hires: false, hires_scale: 1.5, hires_denoise: 0.5, hires_steps: 0, hires_upscaler: 'Latent',
     strength: 0.75, offload: 'auto', vae_tiling: false, flash_attn: true, clip_skip: -1, input_mode: 'init'}, LS.get('form.' + kind, {}));
@@ -182,7 +253,6 @@ function renderForm(kind) {
     <textarea id="gp-${kind}" rows="4" placeholder="${isV ? 'Décrivez la scène ET le mouvement : sujet, action, caméra (travelling, plan fixe…), lumière, style.' : 'Décrivez l’image : sujet, composition, lumière, style…'}" oninput="setGen('${kind}','prompt',this.value,true)">${esc(f.prompt)}</textarea>`;
   if (d.negative) h += `<label class="glab">Prompt négatif <span class="muted small">— ce qu’on ne veut pas voir</span></label><textarea rows="2" oninput="setGen('${kind}','negative',this.value,true)">${esc(f.negative)}</textarea>`;
   else h += '<div class="muted small">Modèle distillé (CFG 1) : il n’utilise pas de prompt négatif.</div>';
-  h += `<div id="glora-${kind}"></div>`;
   // taille
   const base = Math.sqrt(d.width * d.height);
   h += `<div class="grow"><label>Format</label><div>${RATIOS.map(([n, a, b]) => {
@@ -230,6 +300,7 @@ function renderForm(kind) {
 }
 function setGen(kind, k, v, quiet) {
   G.form[kind][k] = v;
+  if (k === 'prompt') markLoras(kind);
   LS.set('form.' + kind, {prompt: G.form[kind].prompt, negative: G.form[kind].negative, offload: G.form[kind].offload, vae_tiling: G.form[kind].vae_tiling, batch: G.form[kind].batch});
   if (!quiet) renderForm(kind);
 }
@@ -249,45 +320,59 @@ async function loadLoras(kind) {
   renderLoras(kind);
 }
 function renderLoras(kind) {
-  const m = G.sel[kind], box = $('glora-' + kind); if (!box || !m) return;
-  const l = G.loras[m.id]; if (!l) return;
-  const fam = m.family || l.family;
-  const ok = l.loras.filter(x => x.family === fam), other = l.loras.filter(x => x.family !== fam);
-  const chip = (x) => `<button class="chip ${x.family && x.family !== fam ? 'dim' : ''}" title="${esc((famLabel(x.family) || 'famille inconnue') + (x.words.length ? ' · mots déclencheurs : ' + x.words.join(', ') : '') + ' · ' + x.source)}" onclick='insertLora("${kind}", ${esc(JSON.stringify(x))})'>${esc(x.name)}${x.family ? ` <span class="muted">${esc(famLabel(x.family))}</span>` : ''}</button>`;
-  box.innerHTML = l.loras.length ? `<details class="small" ${ok.length ? 'open' : ''}><summary>${ok.length} LoRA pour ce modèle (${esc(famLabel(fam) || '?')})${other.length ? `, ${other.length} autres` : ''} — cliquez pour insérer</summary>
-      <div class="chips">${ok.map(chip).join('')}</div>
-      ${other.length ? `<details><summary class="muted">autres familles / famille inconnue (${other.length})</summary><div class="chips">${other.map(chip).join('')}</div></details>` : ''}
-      <div class="muted">Un LoRA ne fonctionne qu’avec un modèle de la même famille. Les mots déclencheurs sont ajoutés avec lui. Dossier : <span class="mono">${esc(l.dir)}</span> (y compris ceux de votre WebUI, par liens).</div></details>`
-    : `<div class="muted small">Aucun LoRA : cherchez-en sur Civitai (type « LoRA ») ou déposez des .safetensors dans <span class="mono">${esc(l.dir)}</span>.</div>`;
+  const m = G.sel[kind], box = $('glora-' + kind); if (!box) return;
+  const nodes = treeNodes(kind);
+  if (!m || nodeOf(kind, m, nodes) !== nodes.find(n => n.key === G.node[kind])) { box.innerHTML = '<p class="muted small">Choisissez d’abord un checkpoint téléchargé ci-dessus.</p>'; return; }
+  const l = G.loras[m.id]; if (!l) { box.innerHTML = '<p class="muted small">…</p>'; return; }
+  const fam = m.family || l.family, base = m.base || '';
+  const all = l.loras.map((x, i) => ({...x, i}));
+  const same = all.filter(x => fam && x.family === fam && base && x.base === base);
+  const near = all.filter(x => fam && x.family === fam && !(base && x.base === base));
+  const other = all.filter(x => !fam || x.family !== fam);
+  const prompt = (G.form[kind] || {}).prompt || '';
+  const chip = (x) => `<button class="chip ${prompt.includes('<lora:' + x.name + ':') ? 'on' : ''}" data-lora="${esc(x.name)}" title="${esc((famLabel(x.family) || 'famille inconnue') + (x.base ? ' · ' + x.base : '') + (x.words.length ? ' · mots déclencheurs : ' + x.words.join(', ') : '') + ' · ' + x.source)}" onclick="toggleLora('${kind}', ${x.i})">${esc(x.name)}${x.base ? ` <span class="muted">${esc(x.base)}</span>` : ''}</button>`;
+  let h = '';
+  if (same.length) h += `<div class="small">Faits pour <b>${esc(base)}</b> :</div><div class="chips">${same.map(chip).join('')}</div>`;
+  if (near.length) h += `<div class="small">${same.length ? 'Autres' : 'LoRA'} de la famille ${esc(famLabel(fam))}${base && same.length ? ' — à essayer' : ''} :</div><div class="chips">${near.map(chip).join('')}</div>`;
+  if (!same.length && !near.length) h += `<p class="muted small">Aucun LoRA ${esc(famLabel(fam) || '')} pour l’instant.</p>`;
+  if (other.length) h += `<details class="small"><summary class="muted">autres familles / famille inconnue (${other.length}) — sans effet ou imprévisibles sur ce modèle</summary><div class="chips">${other.map(chip).join('')}</div></details>`;
+  box.innerHTML = h + `<div class="muted small">Dossier : <span class="mono">${esc(l.dir)}</span> (y compris ceux de votre WebUI, par liens).</div>`;
 }
-function insertLora(kind, x) {
-  const ta = $('gp-' + kind);
-  ta.value = (ta.value.trim() + (x.words.length ? ', ' + x.words.join(', ') : '') + ` <lora:${x.name}:0.8>`).replace(/^, /, '').trim();
-  setGen(kind, 'prompt', ta.value, true);
+function markLoras(kind) {
+  const prompt = (G.form[kind] || {}).prompt || '';
+  document.querySelectorAll(`#glora-${kind} .chip`).forEach(c => c.classList.toggle('on', prompt.includes('<lora:' + c.dataset.lora + ':')));
+}
+function toggleLora(kind, i) {
+  const m = G.sel[kind], x = G.loras[m.id].loras[i], f = G.form[kind];
+  const rx = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tag = new RegExp('\\s*<lora:' + rx(x.name) + ':[^>]*>', 'g');
+  // retirer aussi les mots déclencheurs ajoutés avec lui (juste avant la balise)
+  const withWords = x.words.length ? new RegExp('(^|,\\s*)' + x.words.map(rx).join(',\\s*') + '\\s*<lora:' + rx(x.name) + ':[^>]*>') : null;
+  if (tag.test(f.prompt)) f.prompt = (withWords && withWords.test(f.prompt) ? f.prompt.replace(withWords, '') : f.prompt.replace(tag, '')).trim();
+  else f.prompt = (f.prompt.trim() + (x.words.length ? ', ' + x.words.join(', ') : '') + ` <lora:${x.name}:0.8>`).replace(/^, /, '').trim();
+  const ta = $('gp-' + kind); if (ta) ta.value = f.prompt;
+  setGen(kind, 'prompt', f.prompt, true);
 }
 
-const FAMS = {sd15: 'SD 1.5', sdxl: 'SDXL / Pony / Illustrious', zimage: 'Z-Image', flux2klein9: 'FLUX.2 klein 9B', qwen21: 'Qwen-Image 2.1',
-  anima: 'Anima', krea2: 'Krea 2', wan5b: 'Wan 2.2 5B', wan14b: 'Wan 2.2 A14B', minimax: 'MiniMax-H3', flux: 'FLUX.1 (non pris en charge)'};
-const famLabel = (f) => FAMS[f] || '';
-const VIDEO_FAMS = ['wan5b', 'wan14b', 'minimax'];
+const famLabel = (f) => (G.families[f] || {}).label || '';
 
 // ------------------------------------------------------------------ Civitai
 function civitaiPanel(kind) {
   const c = G.civ && G.civ[kind] || {};
-  const fams = Object.keys(FAMS).filter(f => f !== 'flux' && (kind === 'video') === VIDEO_FAMS.includes(f));
+  const fams = Object.keys(G.families).filter(f => G.families[f].civitai.length && (G.families[f].kind === 'video') === (kind === 'video'));
   return `<details class="civ" id="civ-${kind}" ${c.open ? 'open' : ''} ontoggle="civState('${kind}').open = this.open">
-    <summary>🔎 Chercher sur Civitai — des milliers de checkpoints et de LoRA partagés par la communauté</summary>
-    <div class="small muted" style="margin:6px 0">Seuls les modèles des familles que stable-diffusion.cpp sait charger sont proposés.${kind === 'video' ? ' Pour la vidéo, Civitai propose surtout des LoRA.' : ' Pour Z-Image, FLUX.2, Qwen-Image, Anima et Krea 2, un checkpoint Civitai ne contient que le modèle de diffusion : le modèle de base du catalogue doit être téléchargé (il fournit l’encodeur de texte et le VAE).'}</div>
+    <summary>🔎 Chercher sur Civitai — modèles de base, checkpoints et LoRA partagés par la communauté</summary>
+    <div class="small muted" style="margin:6px 0">Seuls les modèles que stable-diffusion.cpp sait charger sont proposés. « Modèles de base » : les familles qui ne sont pas encore dans le launcher (ex. MOSS Image) ; leurs fichiers viennent de Hugging Face, dans les versions conseillées par la documentation de stable-diffusion.cpp, et une fiche pré-remplie vous est montrée avant tout téléchargement.${kind === 'video' ? ' Pour la vidéo, Civitai propose surtout des LoRA.' : ' Pour Z-Image, FLUX.2, Qwen-Image, Anima et Krea 2, un checkpoint Civitai ne contient que le modèle de diffusion : le modèle de base du catalogue doit être téléchargé (il fournit l’encodeur de texte et le VAE).'}</div>
     <div id="civtok-${kind}"></div>
     <div class="row-inline">
       <input id="civq-${kind}" placeholder="nom, style, personnage…" size="26" value="${esc(c.q || '')}" onkeydown="if(event.key==='Enter')civSearch('${kind}')">
-      <select id="civt-${kind}">${(kind === 'video' ? [['LORA', 'LoRA']] : [['Checkpoint', 'Checkpoints'], ['LORA', 'LoRA']]).map(([v, l]) => `<option value="${v}" ${c.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select id="civf-${kind}"><option value="">toutes les familles compatibles</option>${fams.map(f => `<option value="${f}" ${c.family === f ? 'selected' : ''}>${FAMS[f]}</option>`).join('')}</select>
+      <select id="civt-${kind}" onchange="$('civf-${kind}').disabled = this.value === 'Base'">${(kind === 'video' ? [['LORA', 'LoRA'], ['Base', 'Modèles de base']] : [['Checkpoint', 'Checkpoints'], ['LORA', 'LoRA'], ['Base', 'Modèles de base']]).map(([v, l]) => `<option value="${v}" ${c.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select id="civf-${kind}" ${c.type === 'Base' ? 'disabled' : ''}><option value="">toutes les familles compatibles</option>${fams.map(f => `<option value="${f}" ${c.family === f ? 'selected' : ''}>${esc(G.families[f].label)}</option>`).join('')}</select>
       <select id="civs-${kind}">${['Most Downloaded', 'Highest Rated', 'Newest'].map((v, i) => `<option value="${v}" ${c.sort === v ? 'selected' : ''}>${['les plus téléchargés', 'les mieux notés', 'les plus récents'][i]}</option>`).join('')}</select>
       <label class="switch small"><input type="checkbox" id="civn-${kind}" ${c.nsfw ? 'checked' : ''}> contenu adulte</label>
       <button class="btn" onclick="civSearch('${kind}')">chercher</button>
     </div>
-    <div id="civr-${kind}"></div></details>`;
+    <div id="civr-${kind}"></div><div id="civfiche-${kind}"></div></details>`;
 }
 function civState(kind) { G.civ = G.civ || {}; return G.civ[kind] = G.civ[kind] || {}; }
 async function civSearch(kind, more) {
@@ -296,7 +381,7 @@ async function civSearch(kind, more) {
     sort: $('civs-' + kind).value, nsfw: $('civn-' + kind).checked, items: [], next: ''});
   $('civr-' + kind).insertAdjacentHTML('beforeend', '<p class="muted small" id="civwait">Recherche sur Civitai… (quelques secondes)</p>');
   try {
-    const r = await api(`/api/civitai/search?q=${encodeURIComponent(c.q)}&type=${c.type}&family=${c.family}&sort=${encodeURIComponent(c.sort)}&nsfw=${c.nsfw ? 1 : 0}&cursor=${more ? c.next : ''}`);
+    const r = await api(`/api/civitai/search?q=${encodeURIComponent(c.q)}&type=${c.type}&family=${c.type === 'Base' ? kind : c.family}&sort=${encodeURIComponent(c.sort)}&nsfw=${c.nsfw ? 1 : 0}&cursor=${more ? c.next : ''}`);
     c.items = (c.items || []).concat(r.items); c.next = r.next; c.hasToken = r.has_token;
   } catch (e) { toast('Civitai : ' + e.message, 6000); }
   renderCivitai(kind);
@@ -308,14 +393,47 @@ function renderCivitai(kind) {
     const vi = m._v || 0, v = m.versions[vi], f = v.files.find(x => x.id === m._f) || v.files.find(x => x.primary) || v.files[0];
     return `<div class="mitem civitem">
       ${v.image ? `<img src="${esc(v.image)}" loading="lazy">` : '<div class="noimg">pas d’aperçu</div>'}
-      <div class="n"><a href="${esc(m.url)}" target="_blank">${esc(m.name)}</a></div>
+      <div class="n">${c.type === 'Base' ? `${esc(v.baseModel)} <span class="muted small">— le plus téléchargé : <a href="${esc(m.url)}" target="_blank">${esc(m.name)}</a></span>` : `<a href="${esc(m.url)}" target="_blank">${esc(m.name)}</a>`}</div>
       <div class="s"><span class="badge acc">${esc(v.baseModel)}</span><span>⬇ ${fmtN(m.downloads)}</span><span>par ${esc(m.creator)}</span>${m.nsfw ? '<span class="badge warn">adulte</span>' : ''}</div>
       ${m.versions.length > 1 ? `<select onchange="civPick('${kind}',${i},'v',+this.value)">${m.versions.map((x, j) => `<option value="${j}" ${j === vi ? 'selected' : ''}>${esc(x.name)} (${esc(x.baseModel)})</option>`).join('')}</select>` : `<div class="small muted">${esc(v.name)}</div>`}
       ${v.files.length > 1 ? `<select onchange="civPick('${kind}',${i},'f',+this.value)">${v.files.map(x => `<option value="${x.id}" ${f && x.id === f.id ? 'selected' : ''}>${esc(x.name)} — ${fmtGB(x.size)}</option>`).join('')}</select>` : ''}
       ${v.words.length ? `<div class="small muted">mots déclencheurs : ${esc(v.words.slice(0, 4).join(', '))}</div>` : ''}
-      ${!v.family ? '<div class="small warn">famille non prise en charge</div>' : f ? `<button class="btn small primary" onclick="civDownload('${kind}',${i})">⬇ ${fmtGB(f.size)}</button>` : (v.pickle_only ? '<div class="small muted" title="le format pickle (.ckpt/.pt) peut exécuter du code à l’ouverture : le launcher ne le télécharge pas">seulement en .ckpt (format non sûr)</div>' : '<div class="small muted">aucun fichier téléchargeable</div>')}
+      ${c.type === 'Base' ? (v.doc ? `<div class="small muted">doc sd.cpp : ${esc(v.doc)}</div><button class="btn small primary" onclick="civBase('${kind}',${i})">Préparer la fiche « ${esc(v.baseModel)} »</button>` : '<div class="small warn">famille non prise en charge</div>')
+        : !v.family ? '<div class="small warn">famille non prise en charge</div>' : f ? `<button class="btn small primary" onclick="civDownload('${kind}',${i})">⬇ ${fmtGB(f.size)}</button>` : (v.pickle_only ? '<div class="small muted" title="le format pickle (.ckpt/.pt) peut exécuter du code à l’ouverture : le launcher ne le télécharge pas">seulement en .ckpt (format non sûr)</div>' : '<div class="small muted">aucun fichier téléchargeable</div>')}
       <div id="civdl-${kind}-${i}"></div></div>`;
   }).join('') + '</div>' : '<p class="muted small">Aucun résultat.</p>') + (c.next ? `<button class="btn small" onclick="civSearch('${kind}', true)">plus de résultats</button>` : '');
+}
+function civOpen(kind, type, family) {
+  Object.assign(civState(kind), {open: true, type, family});
+  $('civt-' + kind).value = type; $('civf-' + kind).value = family; $('civf-' + kind).disabled = type === 'Base';
+  const d = $('civ-' + kind); d.open = true; d.scrollIntoView({behavior: 'smooth', block: 'start'});
+  civSearch(kind);
+}
+// Modèle de base (nouvelle famille) : fiche pré-remplie d'après la doc de sd.cpp, validée puis téléchargée
+async function civBase(kind, i) {
+  const m = G.civ[kind].items[i], v = m.versions[m._v || 0], box = $('civfiche-' + kind);
+  box.innerHTML = `<p class="muted small">Lecture de la documentation de stable-diffusion.cpp et des dépôts Hugging Face pour « ${esc(v.baseModel)} »…</p>`;
+  box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  let f; try { f = await api(`/api/civitai/base-prefill?model=${m.id}&version=${v.id}`); }
+  catch (e) { box.innerHTML = `<div class="warn-item error">${esc(e.message)}</div>`; return; }
+  const id = 'civ-' + kind, todo = f.files.filter(x => !x.source.startsWith('déjà')).reduce((a, x) => a + x.size, 0);
+  U.fiches[id] = f;
+  box.innerHTML = `<h3 style="margin:12px 0 4px">Fiche : ${esc(f.name)}</h3>` + ficheHtml(id, f,
+    `<button class="btn primary" onclick="civBaseAccept('${kind}')">✓ Ajouter au launcher et télécharger (${fmtGB(todo)})</button>
+     <button class="btn" onclick="$('civfiche-${kind}').innerHTML=''">annuler</button>`);
+}
+async function civBaseAccept(kind) {
+  const id = 'civ-' + kind, entry = readFiche(id);
+  let r; try { r = await api('/api/updates/accept', {kind: 'gen', entry}); } catch (e) { toast(e.message, 8000); return; }
+  const box = $('civfiche-' + kind);
+  box.innerHTML = `<div class="small">« ${esc(entry.name)} » ajouté au launcher : téléchargement…</div><div id="civbase-job-${kind}"></div>`;
+  const k = entry.kind === 'video' ? 'video' : 'image';
+  G.node[k] = r.id; LS.set('node.' + k, r.id);
+  G.models = {}; if (k === kind) await loadModels(k);
+  try {
+    const j = await api('/api/gen/download', {id: r.id});
+    watchJob(j.job.id, 'civbase-job-' + kind, async (jj) => { await loadModels(k); if (jj.state === 'done') { selectGenModel(k, r.id); toast(entry.name + ' est prêt'); } });
+  } catch (e) { toast(e.message, 8000); }
 }
 function civPick(kind, i, what, val) { const m = G.civ[kind].items[i]; if (what === 'v') { m._v = val; m._f = null; } else m._f = val; renderCivitai(kind); }
 async function civSaveToken(kind) { await api('/api/civitai/token', {token: $('civkey-' + kind).value}); G.civ[kind].hasToken = true; renderCivitai(kind); toast('Clé Civitai enregistrée'); }

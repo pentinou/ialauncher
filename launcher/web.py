@@ -187,6 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"sd": sdcpp.status(), "music": music.status()})
         if path == "/api/gen/models":
             return self._json({"models": sdcpp.models(q.get("kind", "image")), "tags": gen_catalog.TAG_HELP,
+                               "families": sdcpp.families(),
                                "webui": [str(w) for w in sdcpp.webui_installs()]})
         if path == "/api/gen/loras":
             return self._json(sdcpp.loras(q.get("model", "")))
@@ -196,6 +197,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(sdcpp.outputs_info())
         if path == "/api/storage":
             return self._json(storage.scan())
+        if path == "/api/civitai/base-prefill":
+            return self._json(updates.prefill_base(q.get("model", "0"), q.get("version", "0")))
         if path == "/api/civitai/search":
             return self._json(civitai.search(q.get("q", ""), q.get("type", "Checkpoint"), q.get("family", ""),
                                              q.get("sort", "Most Downloaded"), q.get("nsfw") == "1", q.get("cursor", "")))
