@@ -337,6 +337,19 @@ galerie l'affiche alors avec son prompt, son négatif et ses paramètres, et la 
 même quand elle n'est plus parmi les 60 dernières. Les PNG portent aussi les réglages
 dans leurs métadonnées (bloc `parameters` écrit par stable-diffusion.cpp, au format A1111).
 
+**Tableau de variations X/Y/Z** (onglet Image, comme le « X/Y/Z plot » de la WebUI) : une
+image par combinaison de valeurs, X en colonnes, Y en lignes, Z = un tableau par valeur.
+Axes possibles : graine, étapes, CFG, sampler, planning, checkpoint, chercher / remplacer
+dans le prompt (et le négatif), largeur, hauteur, clip skip, force img2img. Écritures :
+`1, 3, 5` ; `1-5` (de 1 en 1) ; `1-5 (+2)` → 1, 3, 5 ; `10-4 (-3)` → 10, 7, 4 ;
+`1-10 [4]` → 1, 4, 7, 10 ; textes séparés par des virgules, entre guillemets s'ils en
+contiennent. Pour « chercher / remplacer », la 1re valeur est le texte du prompt remplacé
+tour à tour par chacune (`:0.8>, :0.4>` fait varier le poids d'un LoRA). Une graine
+aléatoire est tirée une fois pour tout le tableau ; les cases sont générées checkpoint
+par checkpoint (un seul chargement de chaque) ; une case ratée n'arrête pas les autres.
+Chaque image va dans la galerie (champ `xyz` de son `.json`), et la grille se télécharge
+en un PNG titré. 200 images au plus, 50 valeurs par axe.
+
 ## Espace disque
 
 L'onglet **Stockage** mesure tout ce qu'occupe le launcher, groupé : modèles de texte,
@@ -575,7 +588,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | * | `/proxy/…` | relais vers llama-server (normalise les messages Anthropic) |
 | GET | `/api/gen/status`, `/api/gen/models?kind=image\|video`, `/api/gen/loras?model=`, `/api/gen/previews?kind=`, `/api/gen/outputs?kind=` | image / vidéo / musique : état, modèles, LoRA, images et fiches Civitai de l'arborescence, galerie |
 | POST | `/api/gen/engine/install`, `/api/gen/download`, `/api/music/install` | installation des moteurs et modèles |
-| POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/keep`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music), libérer la carte, dossiers, galerie (garder, supprimer) |
+| POST | `/api/gen/run`, `/api/gen/stop`, `/api/gen/dirs`, `/api/gen/outputs/keep`, `/api/gen/outputs/delete` | générer (`kind` : image, video, music ; `grid` : tableau X/Y/Z), libérer la carte, dossiers, galerie (garder, supprimer) |
 | GET/POST | `/api/storage`, `/api/storage/delete` | espace disque |
 | GET/POST | `/api/civitai/search` (`type` : Checkpoint, LORA, Base), `/api/civitai/base-prefill?model=&version=`, `/api/civitai/token`, `/api/civitai/download` | Civitai (`base-prefill` : fiche d'un modèle de base d'après la doc de sd.cpp) |
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |

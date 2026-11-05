@@ -617,6 +617,103 @@ def generate(job, req):
     return {"files": files, "seed": seed, "seconds": meta["seconds"]}
 
 
+# ---------------------------------------------------------------- tableau X/Y/Z
+
+# paramètre d'axe → (libellé, conversion) ; « checkpoint » prend des id de modèle,
+# « prompt_sr » remplace sa 1re valeur, dans le prompt et le négatif, par chacune des autres
+GRID_PARAMS = {"seed": ("Graine", int), "steps": ("Étapes", int), "cfg": ("CFG", float), "sampler": ("Sampler", str),
+               "scheduler": ("Planning", str), "checkpoint": ("Checkpoint", str), "prompt_sr": ("Prompt", str),
+               "width": ("Largeur", int), "height": ("Hauteur", int), "clip_skip": ("Clip skip", int),
+               "strength": ("Force", float)}
+GRID_MAX = 200
+
+
+class _Sub:
+    """Vue d'une tâche réduite à une case du tableau : la progression de la case devient
+    une part de celle du tableau."""
+    def __init__(self, job, i, n, label):
+        self.job, self.i, self.n, self.label = job, i, n, label
+
+    @property
+    def cancel_requested(self):
+        return self.job.cancel_requested
+
+    def logline(self, s):
+        self.job.logline(s)
+
+    def set(self, progress=None, detail=None):
+        self.job.set(None if progress is None else (self.i + progress) / self.n,
+                     None if detail is None else f"image {self.i + 1}/{self.n} ({self.label}) · {detail}")
+
+
+def generate_grid(job, req):
+    """req["grid"] = [{"param", "values"}] pour X, Y, Z (axes vides ignorés). Une image par case,
+    une seule graine pour toutes si elle est aléatoire ; les cases sont générées checkpoint par
+    checkpoint pour ne recharger chaque modèle qu'une fois."""
+    axes = [a for a in req.get("grid") or [] if a.get("param") in GRID_PARAMS and a.get("values")]
+    if not axes:
+        raise RuntimeError("tableau vide : choisissez au moins un paramètre et ses valeurs")
+    for a in axes:
+        conv = GRID_PARAMS[a["param"]][1]
+        a["values"] = [conv(v) for v in a["values"]]
+        if a["param"] == "checkpoint":
+            for v in a["values"]:
+                m = find(v)
+                if not m or not m.get("installed", True):
+                    raise RuntimeError(f"checkpoint introuvable ou pas téléchargé : {v}")
+    while len(axes) < 3:
+        axes.append({"param": "", "values": [None]})
+    n = len(axes[0]["values"]) * len(axes[1]["values"]) * len(axes[2]["values"])
+    if n > GRID_MAX:
+        raise RuntimeError(f"{n} images : le tableau est limité à {GRID_MAX}")
+    base = {k: v for k, v in req.items() if k != "grid"}
+    base["batch"] = 1
+    if int(base.get("seed", -1)) < 0 and "seed" not in [a["param"] for a in axes]:
+        base["seed"] = random.randint(0, 2 ** 31 - 1)     # même graine partout : on compare le paramètre seul
+    cells = [(x, y, z) for z in range(len(axes[2]["values"])) for y in range(len(axes[1]["values"]))
+             for x in range(len(axes[0]["values"]))]
+    ck = next((i for i, a in enumerate(axes) if a["param"] == "checkpoint"), None)
+    if ck is not None:
+        cells.sort(key=lambda c: c[ck])                   # un rechargement par checkpoint
+    out = []
+    for i, c in enumerate(cells):
+        if job.cancel_requested:
+            break
+        r, label = dict(base), []
+        for a, vi in zip(axes, c):
+            if not a["param"]:
+                continue
+            v, name = a["values"][vi], GRID_PARAMS[a["param"]][0]
+            shown = f"{v:g}" if isinstance(v, float) else v
+            if a["param"] == "checkpoint":
+                r["model"] = v
+                label.append(f"{name} : {(find(v) or {}).get('name', v)}")
+            elif a["param"] == "prompt_sr":
+                old = a["values"][0]
+                r["prompt"] = r.get("prompt", "").replace(old, v)
+                r["negative"] = r.get("negative", "").replace(old, v)
+                label.append(f"{name} : {v}")
+            else:
+                r[a["param"]] = v
+                label.append(f"{name} : {shown}")
+        r["xyz"] = " · ".join(label)
+        cell = {"x": c[0], "y": c[1], "z": c[2], "label": r["xyz"]}
+        try:
+            res = generate(_Sub(job, i, len(cells), r["xyz"]), r)
+            if res is None:                               # annulé pendant cette image
+                break
+            cell["file"] = res["files"][0] if res["files"] else None
+        except Exception as e:  # noqa: BLE001 — une case ratée n'arrête pas le tableau
+            cell["error"] = str(e) or e.__class__.__name__
+            job.logline(f"{r['xyz']} : {cell['error']}")
+        out.append(cell)
+    ok = sum(1 for c in out if c.get("file"))
+    job.set(1.0, f"{ok}/{len(cells)} images" + (" (annulé)" if job.cancel_requested else ""))
+    return {"grid": {"axes": [{"param": a["param"], "label": GRID_PARAMS.get(a["param"], ("",))[0],
+                               "values": a["values"]} for a in axes], "cells": out, "seed": base.get("seed")},
+            "files": [c["file"] for c in out if c.get("file")]}
+
+
 # ---------------------------------------------------------------- sorties
 
 def _save(kind, data, ext, meta):
