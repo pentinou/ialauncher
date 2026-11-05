@@ -82,6 +82,11 @@ def download(url, dest, job=None, expected_size=None, label=""):
                     last = now
     if total and done < total:
         raise RuntimeError(f"téléchargement incomplet ({done} / {total} octets)")
+    got = os.path.getsize(part)
+    if total and got != total:
+        # un autre téléchargement écrivait dans le même fichier : il est inutilisable
+        os.remove(part)
+        raise RuntimeError(f"fichier abîmé ({got} octets au lieu de {total}) : relancez le téléchargement")
     os.replace(part, dest)
     if job:
         job.set(1.0, f"{label} terminé")

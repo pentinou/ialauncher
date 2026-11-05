@@ -19,12 +19,13 @@ const LS = {
 function showMode(m) {
   G.mode = m;
   document.querySelectorAll('.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  ['text', 'image', 'video', 'music', 'storage', 'updates'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
+  ['text', 'image', 'video', 'music', 'storage', 'updates', 'logs'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
   LS.set('mode', m);
   if (m === 'image' || m === 'video') loadVisual(m);
   if (m === 'music') loadMusic();
   if (m === 'storage') loadStorage();
   if (m === 'updates') loadUpdates();
+  if (m === 'logs') loadLogs();
 }
 
 async function refreshGenStatus() {
@@ -532,8 +533,15 @@ async function runGen(kind) {
   try {
     const r = await api('/api/gen/run', req);
     $('grun-' + kind).disabled = true;
+    queued(r);
     watchGen(kind, r.job.id);
   } catch (e) { toast(e.message, 6000); }
+}
+// Une génération à la fois sur la carte graphique : celle-ci attend peut-être son tour (autre navigateur).
+// Ce navigateur retient ses propres générations pour les reprendre après un rechargement de page.
+function queued(r) {
+  if (r.ahead) toast(`Une autre génération est en cours : la vôtre démarrera ensuite (${r.ahead} avant elle)`, 6000);
+  LS.set('genjobs', [r.job.id, ...(LS.get('genjobs') || [])].slice(0, 20));
 }
 function watchGen(kind, id) {
   const out = $('go-' + kind);
@@ -720,6 +728,7 @@ async function runMusic() {
   try {
     const r = await api('/api/gen/run', Object.assign({kind: 'music'}, f));
     $('grun-music').disabled = true;
+    queued(r);
     watchGen('music', r.job.id);
   } catch (e) { toast(e.message, 6000); }
 }
@@ -729,8 +738,9 @@ async function runMusic() {
   // reprend une génération / un téléchargement en cours après un rechargement de page
   try {
     const jobs = await api('/api/jobs');
+    const mine = LS.get('genjobs') || [];
     for (const j of jobs.filter(x => x.state === 'running')) {
-      if (j.kind === 'gen') { const k = j.label.startsWith('Musique') ? 'music' : j.label.startsWith('Vidéo') ? 'video' : 'image'; showMode(k); setTimeout(() => watchGen(k, j.id), 800); return; }
+      if (j.kind === 'gen' && mine.includes(j.id)) { const k = j.label.startsWith('Musique') ? 'music' : j.label.startsWith('Vidéo') ? 'video' : 'image'; showMode(k); setTimeout(() => watchGen(k, j.id), 800); return; }
     }
   } catch (e) { /* */ }
   const m = LS.get('mode', 'text');

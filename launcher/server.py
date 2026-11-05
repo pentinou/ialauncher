@@ -13,7 +13,7 @@ import json
 import socket
 from pathlib import Path
 
-from . import engine, paths, hardware
+from . import engine, journal, paths, hardware
 
 MiB = 1024 ** 2
 
@@ -181,7 +181,7 @@ class Server:
             kw = {}
             if sys.platform == "win32":
                 kw["creationflags"] = 0x08000000
-            logf = open(paths.logs_dir() / "llama-server.log", "w", encoding="utf-8", errors="replace")
+            logf = journal.open_service_log("llama-server")
             self.proc = subprocess.Popen([bin_path, *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          text=True, encoding="utf-8", errors="replace",
                                          env=engine.env_for(bin_path), cwd=str(paths.home()), **kw)
@@ -195,7 +195,7 @@ class Server:
     def _pump(self, proc, logf):
         for line in proc.stdout:
             line = line.rstrip("\n")
-            logf.write(line + "\n")
+            logf.write((line + "\n").encode("utf-8", "replace"))
             self.log.append(line)
             del self.log[:-600]
             self._parse(line)
