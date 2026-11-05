@@ -574,7 +574,7 @@ async function runGen(kind) {
     const n = axes.reduce((a, x) => a * x.values.length, 1);
     if (n > 200) { toast(`${n} images : le tableau est limité à 200`, 6000); return; }
     if (n > 40 && !confirm(`Générer ${n} images ?`)) return;
-    req.grid = axes.map(a => ({param: a.param, values: a.values}));
+    req.grid = axes.map(a => ({param: a.param, values: a.values, ...(a.search ? {search: a.search} : {})}));
   }
   try {
     const r = await api('/api/gen/run', req);
@@ -590,10 +590,10 @@ const XYZ = [['', '—'], ['seed', 'Graine'], ['steps', 'Étapes'], ['cfg', 'CFG
   ['clip_skip', 'Clip skip'], ['strength', 'Force (img2img)']];
 const XYZ_INT = ['seed', 'steps', 'width', 'height', 'clip_skip'], XYZ_NUM = XYZ_INT.concat(['cfg', 'strength']);
 const XYZ_HINT = {seed: '1, 2, 3', steps: '10-40 (+10)', cfg: '1-9 (+2)', sampler: 'euler, dpm++2m', scheduler: 'karras, simple',
-  checkpoint: '＋ ajouter… à droite', prompt_sr: 'chat, chien, renard', width: '768, 1024', height: '768, 1024', clip_skip: '1, 2', strength: '0.3-0.9 [4]'};
+  checkpoint: '＋ ajouter… à droite', prompt_sr: ':-2>, :3>', width: '768, 1024', height: '768, 1024', clip_skip: '1, 2', strength: '0.3-0.9 [4]'};
 function xyzState(kind) {
   const f = G.form[kind];
-  if (!Array.isArray(f.xyz) || f.xyz.length !== 3) f.xyz = [{p: '', t: ''}, {p: '', t: ''}, {p: '', t: ''}];
+  if (!Array.isArray(f.xyz) || f.xyz.length !== 3) f.xyz = [{p: '', t: '', s: ''}, {p: '', t: '', s: ''}, {p: '', t: '', s: ''}];
   return f.xyz;
 }
 const ckptList = (kind) => (G.models[kind] || []).filter(m => m.installed);
@@ -606,17 +606,18 @@ function xyzHtml(kind) {
       const a = ax[i], e = en(a.p);
       return `<div class="grow"><label>${lab}</label><div>
         <select onchange="setAxis('${kind}',${i},'p',this.value)">${XYZ.map(([v, l]) => `<option value="${v}" ${v === a.p ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        ${a.p === 'prompt_sr' ? `<span class="small muted">chercher</span><input value="${esc(a.s || '')}" placeholder="texte du prompt, ex. :-2>" style="flex:1;min-width:120px" oninput="setAxis('${kind}',${i},'s',this.value)"><span class="small muted">remplacer par</span>` : ''}
         ${a.p ? `<input id="xyzt-${kind}-${i}" value="${esc(a.t)}" placeholder="${esc(XYZ_HINT[a.p])}" style="flex:1;min-width:150px" oninput="setAxis('${kind}',${i},'t',this.value)">` : ''}
         ${e ? `<select onchange="addAxisValue('${kind}',${i},this.value);this.value=''"><option value="">＋ ajouter…</option>${e.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : ''}
         <span class="small" id="xyzp-${kind}-${i}"></span></div></div>`;
     }).join('')}
-    <div class="small muted" style="margin-top:6px"><b>Écrire les valeurs :</b> liste <span class="mono">1, 3, 5</span> · de 1 en 1 <span class="mono">1-5</span> · avec un pas <span class="mono">1-5 (+2)</span> → 1, 3, 5, ou <span class="mono">10-4 (-3)</span> → 10, 7, 4 · N valeurs régulières <span class="mono">1-10 [4]</span> → 1, 4, 7, 10. Décimales avec un point (<span class="mono">3.5</span>). Textes séparés par des virgules, entre guillemets s’ils en contiennent. <b>Chercher / remplacer :</b> la 1<sup>re</sup> valeur est un texte du prompt, remplacé tour à tour par chacune (<span class="mono">chat, chien, renard</span>) ; pour le poids d’un LoRA <span class="mono">&lt;lora:x:0.8&gt;</span> : <span class="mono">:0.8&gt;, :0.4&gt;, :1.2&gt;</span>.</div>
+    <div class="small muted" style="margin-top:6px"><b>Écrire les valeurs :</b> liste <span class="mono">1, 3, 5</span> · de 1 en 1 <span class="mono">1-5</span> · avec un pas <span class="mono">1-5 (+2)</span> → 1, 3, 5, ou <span class="mono">10-4 (-3)</span> → 10, 7, 4 · N valeurs régulières <span class="mono">1-10 [4]</span> → 1, 4, 7, 10. Décimales avec un point (<span class="mono">3.5</span>). Textes séparés par des virgules, entre guillemets s’ils en contiennent. <b>Chercher / remplacer :</b> 1<sup>er</sup> champ = un texte du prompt (ou du négatif), 2<sup>e</sup> = ce qui le remplace, une image par valeur : chercher <span class="mono">chat</span>, remplacer par <span class="mono">chat, chien, renard</span>. Pour le poids d’un LoRA <span class="mono">&lt;lora:nom:-2&gt;</span> : chercher <span class="mono">:-2&gt;</span>, remplacer par <span class="mono">:-2&gt;, :3&gt;</span>. 1<sup>er</sup> champ vide = écriture de la WebUI (la 1<sup>re</sup> valeur est cherchée).</div>
   </details>`;
 }
 function setAxis(kind, i, k, v) {
   const ax = xyzState(kind);
   ax[i][k] = v;
-  if (k === 'p') { ax[i].t = ''; setGen(kind, 'xyz', ax); return; }
+  if (k === 'p') { ax[i].t = ''; ax[i].s = ''; setGen(kind, 'xyz', ax); return; }
   setGen(kind, 'xyz', ax, true);
   updateXyz(kind);
 }
@@ -629,7 +630,7 @@ function addAxisValue(kind, i, v) {
   updateXyz(kind);
 }
 // Valeurs d'un axe à partir de son écriture ; lève une erreur lisible sinon.
-function parseAxis(kind, p, t) {
+function parseAxis(kind, p, t, search) {
   // virgules hors guillemets
   const toks = t.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(x => x.trim()).filter(Boolean).map(x => x.replace(/^"(.*)"$/, '$1'));
   if (!toks.length) throw new Error('aucune valeur');
@@ -658,7 +659,8 @@ function parseAxis(kind, p, t) {
     const known = p === 'sampler' ? SAMPLERS : p === 'scheduler' ? SCHEDULERS : p === 'checkpoint' ? ckptList(kind).map(m => m.name) : null;
     const bad = known ? vals.filter(v => !known.includes(v)) : [];
     if (bad.length) throw new Error(`inconnu : ${bad.join(', ')}`);
-    if (p === 'prompt_sr' && !(G.form[kind].prompt || '').includes(vals[0])) throw new Error(`« ${vals[0]} » n’est pas dans le prompt`);
+    const where = (G.form[kind].prompt || '') + '\n' + (G.form[kind].negative || ''), find = search || vals[0];
+    if (p === 'prompt_sr' && !where.includes(find)) throw new Error(`« ${find} » n’est ni dans le prompt ni dans le négatif`);
   }
   if (vals.length > 50) throw new Error(`${vals.length} valeurs : 50 au plus par axe`);
   return vals;
@@ -666,9 +668,10 @@ function parseAxis(kind, p, t) {
 // axes renseignés, avec leurs valeurs (les checkpoints passent de leur nom à leur id)
 function xyzAxes(kind) {
   return xyzState(kind).filter(a => a.p).map(a => {
-    const shown = parseAxis(kind, a.p, a.t);
+    const search = a.p === 'prompt_sr' ? (a.s || '') : '';
+    const shown = parseAxis(kind, a.p, a.t, search);
     const values = a.p === 'checkpoint' ? shown.map(n => ckptList(kind).find(m => m.name === n).id) : shown;
-    return {param: a.p, values, shown};
+    return search ? {param: a.p, values, shown, search} : {param: a.p, values, shown};
   });
 }
 function updateXyz(kind) {
@@ -677,7 +680,7 @@ function updateXyz(kind) {
     const el = $(`xyzp-${kind}-${i}`); if (!el || !a.p) return;
     any = true;
     try {
-      const v = parseAxis(kind, a.p, a.t); n *= v.length;
+      const v = parseAxis(kind, a.p, a.t, a.p === 'prompt_sr' ? a.s : ''); n *= v.length;
       el.className = 'small muted'; el.textContent = `→ ${v.length > 12 ? v.slice(0, 12).join(', ') + '…' : v.join(', ')} (${v.length})`;
     } catch (e) { ok = false; el.className = 'small warn'; el.textContent = a.t.trim() ? e.message : ''; }
   });
@@ -700,31 +703,74 @@ function showGrid(kind, g) {
         return `<td>${c && c.file ? `<a href="${c.file.url}" target="_blank" title="${esc(c.label)}"><img src="${c.file.url}" loading="lazy" alt=""></a>` : `<div class="xyzerr" title="${esc(c ? c.error || '' : '')}">${esc(c ? (c.error || '').slice(0, 80) : 'pas générée')}</div>`}</td>`;
       }).join('') + '</tr>';
     });
-    h += `</table></div><button class="btn small" onclick="downloadGrid('${kind}', ${zi})">⬇ grille en une image PNG</button>`;
+    h += '</table></div>';
   });
-  out.innerHTML = h + `<div class="small muted" style="margin-top:6px">${g.seed != null ? `Graine commune : <span class="mono">${g.seed}</span> · ` : ''}chaque image est aussi dans la galerie avec ses réglages ; cliquez pour l’ouvrir en grand.</div>`;
+  out.innerHTML = h + `<div class="row-inline small muted" style="margin-top:6px"><button class="btn small" onclick="downloadGrid('${kind}')">⬇ grille en une image PNG</button>
+    <span>${g.seed != null ? `Graine commune : <span class="mono">${g.seed}</span> · ` : ''}la grille va dans la galerie ; cliquez sur une image pour l’ouvrir en grand.</span></div>`;
 }
-// la grille avec ses titres, dessinée dans un canvas puis téléchargée
-async function downloadGrid(kind, zi) {
-  const g = (G.grid || {})[kind]; if (!g) return;
-  const [X, Y, Z] = g.axes, cells = g.cells.filter(c => c.z === zi), im = {};
-  await Promise.all(cells.filter(c => c.file).map(c => new Promise(r => { const i = new Image(); i.onload = () => { im[c.x + ',' + c.y] = i; r(); }; i.onerror = r; i.src = c.file.url; })));
-  const all = Object.values(im); if (!all.length) { toast('Aucune image dans ce tableau'); return; }
-  const cw = Math.max(...all.map(i => i.naturalWidth)), ch = Math.max(...all.map(i => i.naturalHeight));
-  const fs = Math.max(18, Math.round(cw / 22)), head = Z.param ? fs * 2.4 : 0, top = X.param ? fs * 2.2 : 0, left = Y.param ? Math.round(cw * 0.5) : 0;
+// La grille titrée (tous les tableaux Z l'un sous l'autre) dessinée dans un canvas → PNG.
+async function gridBlob(kind, g) {
+  const [X, Y, Z] = g.axes, im = {};
+  await Promise.all(g.cells.filter(c => c.file).map(c => new Promise(r => { const i = new Image(); i.onload = () => { im[c.x + ',' + c.y + ',' + c.z] = i; r(); }; i.onerror = r; i.src = c.file.url; })));
+  const all = Object.values(im); if (!all.length) return null;
+  const n = X.values.length * Y.values.length * Z.values.length;
+  const side = Math.max(256, Math.min(1024, Math.sqrt(16e6 / n)));
+  const nat = Math.max(...all.map(i => Math.max(i.naturalWidth, i.naturalHeight))), k = Math.min(1, side / nat);
+  const cw = Math.round(Math.max(...all.map(i => i.naturalWidth)) * k), ch = Math.round(Math.max(...all.map(i => i.naturalHeight)) * k);
+  const fs = Math.max(14, Math.round(cw / 22)), head = Z.param ? Math.round(fs * 2.4) : 0, top = X.param ? Math.round(fs * 2.2) : 0, left = Y.param ? Math.round(cw * 0.5) : 0;
+  const blockH = head + top + ch * Y.values.length;
   const cv = document.createElement('canvas');
-  cv.width = left + cw * X.values.length; cv.height = head + top + ch * Y.values.length;
+  cv.width = left + cw * X.values.length; cv.height = blockH * Z.values.length;
   const ctx = cv.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
   ctx.fillStyle = '#111'; ctx.font = `${fs}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (Z.param) ctx.fillText(`${Z.label} : ${xyzFmt(kind, Z, Z.values[zi])}`, cv.width / 2, head / 2, cv.width - 20);
-  if (X.param) X.values.forEach((v, i) => ctx.fillText(`${X.label} : ${xyzFmt(kind, X, v)}`, left + cw * i + cw / 2, head + top / 2, cw - 10));
-  if (Y.param) Y.values.forEach((v, i) => ctx.fillText(`${Y.label} : ${xyzFmt(kind, Y, v)}`, left / 2, head + top + ch * i + ch / 2, left - 10));
-  for (const [k, i] of Object.entries(im)) {
-    const [x, y] = k.split(',').map(Number);
-    ctx.drawImage(i, left + cw * x + (cw - i.naturalWidth) / 2, head + top + ch * y + (ch - i.naturalHeight) / 2);
-  }
-  cv.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `tableau-${g.seed ?? 'xyz'}${Z.param ? '-' + (zi + 1) : ''}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
+  Z.values.forEach((zv, zi) => {
+    const y0 = blockH * zi;
+    if (Z.param) { ctx.font = `bold ${fs}px sans-serif`; ctx.fillText(`${Z.label} : ${xyzFmt(kind, Z, zv)}`, cv.width / 2, y0 + head / 2, cv.width - 20); ctx.font = `${fs}px sans-serif`; }
+    if (X.param) X.values.forEach((v, i) => ctx.fillText(`${X.label} : ${xyzFmt(kind, X, v)}`, left + cw * i + cw / 2, y0 + head + top / 2, cw - 10));
+    if (Y.param) Y.values.forEach((v, i) => {             // titre de ligne sur deux lignes : la colonne est étroite
+      const yc = y0 + head + top + ch * i + ch / 2;
+      ctx.fillText(Y.label + ' :', left / 2, yc - fs * 0.7, left - 10);
+      ctx.fillText(String(xyzFmt(kind, Y, v)), left / 2, yc + fs * 0.7, left - 10);
+    });
+    X.values.forEach((xv, xi) => Y.values.forEach((yv, yi) => {
+      const i = im[xi + ',' + yi + ',' + zi]; if (!i) return;
+      const w = i.naturalWidth * k, h = i.naturalHeight * k;
+      ctx.drawImage(i, left + cw * xi + (cw - w) / 2, y0 + head + top + ch * yi + (ch - h) / 2, w, h);
+    }));
+  });
+  return new Promise(r => cv.toBlob(r, 'image/png'));
+}
+async function downloadGrid(kind) {
+  const g = (G.grid || {})[kind]; if (!g) return;
+  const b = await gridBlob(kind, g); if (!b) { toast('Aucune image dans ce tableau'); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `tableau-${g.seed ?? 'xyz'}.png`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+// Envoie la grille au launcher, qui la range dans la galerie. Par morceaux de 700 Ko : le proxy
+// de YunoHost refuse les requêtes de plus de 1 Mo.
+const gridSending = new Set();
+async function uploadGrid(kind, dir, g) {
+  if (gridSending.has(dir)) return;
+  gridSending.add(dir);
+  try {
+    const b = await gridBlob(kind, g); if (!b) return;
+    const data = new Uint8Array(await b.arrayBuffer()), token = Math.random().toString(36).slice(2, 12), CH = 700000;
+    for (let o = 0; o < data.length; o += CH) {
+      const last = o + CH >= data.length ? 1 : 0;
+      const r = await fetch(`/api/gen/grid/png?kind=${kind}&dir=${encodeURIComponent(dir)}&token=${token}&offset=${o}&last=${last}`,
+        {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: data.subarray(o, o + CH)});
+      const d = await r.json(); if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
+    }
+    toast('Grille ajoutée à la galerie');
+  } catch (e) { toast('Grille non enregistrée : ' + e.message, 8000); }
+  finally { gridSending.delete(dir); }
+}
+// tableaux finis pendant qu'aucun navigateur ne regardait : ce navigateur dessine leur grille
+async function sendPendingGrids(kind) {
+  let l; try { l = await api('/api/gen/grids/pending?kind=' + kind); } catch (e) { return false; }
+  for (const x of l) await uploadGrid(kind, x.dir, x.grid);
+  return l.length > 0;
 }
 
 // Une génération à la fois sur la carte graphique : celle-ci attend peut-être son tour (autre navigateur).
@@ -740,7 +786,11 @@ function watchGen(kind, id) {
   watchJob(id, 'gjob-' + kind, (j) => {
     clearInterval(svc); refreshGenStatus();
     const b = $('grun-' + kind); if (b) b.disabled = false;
-    if (j.state === 'done' && j.result) { if (j.result.grid) showGrid(kind, j.result.grid); else showResult(kind, j.result.files); loadOutputs(kind); }
+    if (j.state === 'done' && j.result) {
+      if (!j.result.grid) { showResult(kind, j.result.files); loadOutputs(kind); return; }
+      showGrid(kind, j.result.grid);
+      if (j.result.dir) uploadGrid(kind, j.result.dir, j.result.grid).then(() => loadOutputs(kind));
+    }
   });
 }
 // La carte graphique ne porte qu'un gros modèle : prévenir si le serveur de texte tourne.
@@ -765,6 +815,7 @@ function resultInfo(kind, f) {
   return `<div class="small muted" style="margin-top:6px">${esc(m.model_name || '')} · graine <span class="mono">${m.seed}</span> · ${m.width ? m.width + '×' + m.height + ' · ' : ''}${m.steps ? m.steps + ' étapes · ' : ''}${m.gen_seconds != null ? m.gen_seconds + ' s de calcul' + (m.seconds > m.gen_seconds + 1 ? ` (+ ${(m.seconds - m.gen_seconds).toFixed(0)} s de chargement)` : '') : ''}</div>
     <div class="small">${esc(m.prompt || '')}</div>
     <div class="row-inline">${kind === 'music' ? '' : `<button class="btn small gkeep ${m.kept ? 'primary' : ''}" data-name="${esc(f.name)}" data-kept="${m.kept ? 1 : ''}" onclick="keepOutput('${kind}', this.dataset.name, !this.dataset.kept)" title="afficher son prompt et ses réglages dans la galerie">${m.kept ? '★ gardée' : '☆ garder avec ses réglages'}</button>`}
+      ${m.grid ? `<button class="btn small" onclick='showGridOf("${kind}", ${esc(JSON.stringify(f.name))})'>voir les images séparées</button>` : ''}
       <button class="btn small" onclick='reuseMeta("${kind}", ${esc(JSON.stringify(f.name))})'>reprendre ces réglages</button>
       ${kind === 'image' ? `<button class="btn small" onclick='toInput("${f.url}")'>utiliser comme image d’entrée</button>` : ''}
       <a class="btn small" href="${f.url}" download>télécharger</a>
@@ -772,8 +823,9 @@ function resultInfo(kind, f) {
 }
 
 // ------------------------------------------------------------------ galerie
-async function loadOutputs(kind) {
+async function loadOutputs(kind, again) {
   try { G['out_' + kind] = await api('/api/gen/outputs?kind=' + kind); } catch (e) { return; }
+  if (kind === 'image' && !again) sendPendingGrids(kind).then(sent => { if (sent) loadOutputs(kind, true); });
   renderOutDir(kind);
   const box = $('gg-' + kind); if (!box) return;
   const items = G['out_' + kind];
@@ -803,6 +855,7 @@ function paramsLine(m) {
   if (m.flow_shift) p.push('flow shift ' + m.flow_shift);
   if (m.hires) p.push(`hires ×${m.hires_scale} (${m.hires_upscaler}, débruitage ${m.hires_denoise})`);
   if (m.seed != null) p.push('graine ' + m.seed);
+  if (m.grid) p.unshift('Tableau ' + m.grid.axes.filter(a => a.param).map(a => `${a.label} (${a.values.length})`).join(' × '));
   return p.filter(Boolean).join(' · ');
 }
 async function keepOutput(kind, name, keep) {
@@ -845,6 +898,10 @@ function reuseMeta(kind, name) {
   if (!G.sel[kind]) { toast('Le modèle de cette génération n’est plus disponible'); return; }
   Object.assign(G.form[kind], pick(m, ['prompt', 'negative', 'width', 'height', 'steps', 'high_noise_steps', 'cfg', 'sampler', 'scheduler', 'seed', 'clip_skip', 'frames', 'fps', 'flow_shift', 'hires', 'hires_scale', 'hires_denoise', 'hires_upscaler', 'strength']));
   renderForm(kind); toast('Réglages repris (graine comprise)');
+}
+function showGridOf(kind, name) {
+  const f = (G['out_' + kind] || []).find(x => x.name === name);
+  if (f && f.meta.grid) showGrid(kind, f.meta.grid);
 }
 function pick(o, keys) { const r = {}; keys.forEach(k => { if (o[k] !== undefined) r[k] = o[k]; }); return r; }
 async function toInput(url) {

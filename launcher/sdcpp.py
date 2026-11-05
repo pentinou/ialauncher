@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -608,7 +609,8 @@ def generate(job, req):
     meta.update({"seed": seed, "model_name": m["name"], "kind": kind, "seconds": round(time.time() - t0, 1),
                  "gen_seconds": round(time.time() - t_gen, 1)})
     if kind == "image":
-        files = [_save("image", base64.b64decode(im["b64_json"]), "png", dict(meta, seed=seed + im.get("index", 0)))
+        files = [_save("image", base64.b64decode(im["b64_json"]), "png", dict(meta, seed=seed + im.get("index", 0)),
+                       req.get("xyz_dir", ""))
                  for im in res.get("images", [])]
     else:
         ext = {"video/webm": "webm", "video/x-msvideo": "avi"}.get(res.get("mime_type"), res.get("output_format", "webm"))
@@ -654,6 +656,8 @@ def generate_grid(job, req):
     if not axes:
         raise RuntimeError("tableau vide : choisissez au moins un paramètre et ses valeurs")
     for a in axes:
+        if a["param"] == "prompt_sr" and a.get("search") and a["search"] not in req.get("prompt", "") + req.get("negative", ""):
+            raise RuntimeError(f"« {a['search']} » n'est ni dans le prompt ni dans le négatif")
         conv = GRID_PARAMS[a["param"]][1]
         a["values"] = [conv(v) for v in a["values"]]
         if a["param"] == "checkpoint":
@@ -668,6 +672,8 @@ def generate_grid(job, req):
         raise RuntimeError(f"{n} images : le tableau est limité à {GRID_MAX}")
     base = {k: v for k, v in req.items() if k != "grid"}
     base["batch"] = 1
+    sub = "tableaux/" + time.strftime("%Y%m%d-%H%M%S")
+    base["xyz_dir"] = sub                                 # les cases vont là, pas dans la galerie
     if int(base.get("seed", -1)) < 0 and "seed" not in [a["param"] for a in axes]:
         base["seed"] = random.randint(0, 2 ** 31 - 1)     # même graine partout : on compare le paramètre seul
     cells = [(x, y, z) for z in range(len(axes[2]["values"])) for y in range(len(axes[1]["values"]))
@@ -689,7 +695,7 @@ def generate_grid(job, req):
                 r["model"] = v
                 label.append(f"{name} : {(find(v) or {}).get('name', v)}")
             elif a["param"] == "prompt_sr":
-                old = a["values"][0]
+                old = a.get("search") or a["values"][0]
                 r["prompt"] = r.get("prompt", "").replace(old, v)
                 r["negative"] = r.get("negative", "").replace(old, v)
                 label.append(f"{name} : {v}")
@@ -709,15 +715,75 @@ def generate_grid(job, req):
         out.append(cell)
     ok = sum(1 for c in out if c.get("file"))
     job.set(1.0, f"{ok}/{len(cells)} images" + (" (annulé)" if job.cancel_requested else ""))
-    return {"grid": {"axes": [{"param": a["param"], "label": GRID_PARAMS.get(a["param"], ("",))[0],
-                               "values": a["values"]} for a in axes], "cells": out, "seed": base.get("seed")},
-            "files": [c["file"] for c in out if c.get("file")]}
+    grid = {"axes": [{"param": a["param"], "label": GRID_PARAMS.get(a["param"], ("",))[0], "values": a["values"],
+                      **({"search": a["search"]} if a.get("search") else {})} for a in axes],
+            "cells": out, "seed": base.get("seed")}
+    if ok:
+        # la grille titrée est dessinée par le navigateur (grid_png_part) ; ce fichier la décrit en attendant
+        meta = {k: v for k, v in base.items() if k not in ("init_image", "ref_images", "end_image")}
+        meta["model_name"] = (find(base["model"]) or {}).get("name", base["model"])
+        d = paths.outputs_dir() / "image" / sub
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "tableau.json").write_text(json.dumps({"grid": grid, "meta": meta, "png": None}, ensure_ascii=False, indent=1))
+    return {"grid": grid, "dir": sub if ok else None, "files": [c["file"] for c in out if c.get("file")]}
+
+
+_grid_lock = threading.Lock()
+
+
+def _grid_dir(kind, sub):
+    d = (paths.outputs_dir() / kind / sub).resolve()
+    if d.parent != (paths.outputs_dir() / kind / "tableaux").resolve() or not (d / "tableau.json").is_file():
+        raise RuntimeError("tableau introuvable")
+    return d
+
+
+def grids_pending(kind):
+    """Tableaux dont la grille PNG n'a pas encore été envoyée (navigateur fermé avant la fin)."""
+    out = []
+    for rj in sorted((paths.outputs_dir() / kind / "tableaux").glob("*/tableau.json")):
+        try:
+            rec = json.loads(rj.read_text())
+        except (OSError, ValueError):
+            continue
+        if not rec.get("png"):
+            out.append({"dir": "tableaux/" + rj.parent.name, "grid": rec["grid"]})
+    return out
+
+
+def grid_png_part(kind, sub, token, offset, data, last):
+    """Reçoit la grille PNG par morceaux (le proxy de YunoHost refuse les requêtes de plus de 1 Mo),
+    puis l'enregistre dans la galerie avec les réglages du tableau."""
+    d = _grid_dir(kind, sub)
+    if not re.fullmatch(r"[0-9a-z]{6,32}", token or ""):
+        raise RuntimeError("jeton invalide")
+    part = d / f"{token}.part"
+    if offset == 0:
+        part.write_bytes(b"")
+    if not part.is_file() or part.stat().st_size != offset:
+        raise RuntimeError("morceau reçu dans le désordre : recommencez")
+    with open(part, "ab") as f:
+        f.write(data)
+    if not last:
+        return {"ok": True}
+    with _grid_lock:
+        rec = json.loads((d / "tableau.json").read_text())
+        png = part.read_bytes()
+        part.unlink()
+        if rec.get("png"):                                # déjà envoyée par un autre navigateur
+            return {"name": rec["png"], "url": f"/outputs/{kind}/{rec['png']}"}
+        if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise RuntimeError("ce n'est pas un PNG")
+        f = _save(kind, png, "png", dict(rec["meta"], grid=rec["grid"]))
+        rec["png"] = f["name"]
+        (d / "tableau.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+    return f
 
 
 # ---------------------------------------------------------------- sorties
 
-def _save(kind, data, ext, meta):
-    d = paths.outputs_dir() / kind
+def _save(kind, data, ext, meta, sub=""):
+    d = paths.outputs_dir() / kind / sub
     d.mkdir(parents=True, exist_ok=True)
     stem = time.strftime("%Y%m%d-%H%M%S") + f"-{meta.get('seed', 0)}"
     p = d / f"{stem}.{ext}"
@@ -727,7 +793,7 @@ def _save(kind, data, ext, meta):
         n += 1
     p.write_bytes(data)
     p.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
-    return {"name": p.name, "url": f"/outputs/{kind}/{p.name}", "meta": meta}
+    return {"name": p.name, "url": f"/outputs/{kind}/{sub + '/' if sub else ''}{p.name}", "meta": meta}
 
 
 def _meta(p):
@@ -742,7 +808,7 @@ def outputs(kind, limit=60):
     d = paths.outputs_dir() / kind
     if not d.is_dir():
         return []
-    items = sorted((p for p in d.iterdir() if p.suffix != ".json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    items = sorted((p for p in d.iterdir() if p.is_file() and p.suffix != ".json"), key=lambda p: p.stat().st_mtime, reverse=True)
     out = []
     for i, p in enumerate(items):
         meta = _meta(p)
@@ -822,5 +888,11 @@ def _output_path(kind, name):
 
 def delete_output(kind, name):
     p = _output_path(kind, name)
+    meta = _meta(p)
+    if meta.get("grid") and meta.get("xyz_dir"):           # une grille : ses images partent avec elle
+        try:
+            shutil.rmtree(_grid_dir(kind, meta["xyz_dir"]))
+        except RuntimeError:
+            pass
     p.unlink(missing_ok=True)
     p.with_suffix(".json").unlink(missing_ok=True)

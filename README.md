@@ -347,8 +347,16 @@ contiennent. Pour « chercher / remplacer », la 1re valeur est le texte du prom
 tour à tour par chacune (`:0.8>, :0.4>` fait varier le poids d'un LoRA). Une graine
 aléatoire est tirée une fois pour tout le tableau ; les cases sont générées checkpoint
 par checkpoint (un seul chargement de chaque) ; une case ratée n'arrête pas les autres.
-Chaque image va dans la galerie (champ `xyz` de son `.json`), et la grille se télécharge
-en un PNG titré. 200 images au plus, 50 valeurs par axe.
+« Chercher / remplacer » a deux champs : le texte cherché dans le prompt (ou le négatif), puis
+ses remplaçants, une image par valeur (chercher `:-2>`, remplacer par `:-2>, :3>` pour le poids
+d'un LoRA) ; 1er champ vide = écriture de la WebUI. La galerie montre la **grille titrée**
+(un PNG, tous les tableaux Z l'un sous l'autre, cases réduites pour rester sous 16 Mpx),
+avec « voir les images séparées » ; les images elles-mêmes sont rangées dans
+`outputs/image/tableaux/<date>/` (champ `xyz` de leur `.json`), et supprimer la grille les
+supprime aussi. La grille est dessinée par le navigateur puis envoyée par morceaux de 700 Ko
+(le proxy de YunoHost refuse les requêtes de plus de 1 Mo) ; si aucun navigateur n'était
+ouvert à la fin du tableau, le prochain qui ouvre la galerie s'en charge.
+200 images au plus, 50 valeurs par axe.
 
 ## Espace disque
 
@@ -577,6 +585,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET | `/api/hardware`, `/api/live` | inventaire matériel ; valeurs qui bougent (VRAM, RAM, disque) |
 | GET/POST | `/api/engine`, `/api/engine/install`, `/api/engine/custom`, `/api/engine/select` | état et installation du moteur |
 | GET/POST | `/api/jobs`, `/api/jobs/<id>`, `/api/jobs/<id>/cancel` | tâches longues |
+| GET/POST | `/api/gen/grids/pending`, `/api/gen/grid/png?dir=&token=&offset=&last=` | tableaux X/Y/Z sans grille ; envoi de la grille PNG par morceaux |
 | GET | `/api/logs`, `/api/logs/<fichier>?lines=` | journaux présents ; leurs dernières lignes (onglet Journaux) |
 | GET/POST | `/api/models`, `/api/models/profile`, `/api/models/dirs` | modèles locaux, profil, dossiers |
 | GET/POST | `/api/catalog`, `/api/hf/search`, `/api/hf/repo`, `/api/hf/profile`, `/api/hf/download`, `/api/hf/analyze` | catalogue et Hugging Face |
