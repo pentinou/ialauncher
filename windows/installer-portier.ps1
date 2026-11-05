@@ -40,10 +40,10 @@ if (-not $admin) {
 
 $nom = "IA Launcher - portier"
 $allow = "127.0.0.1" + $(if ($Autorisees) { "," + $Autorisees.Replace(" ", "") } else { "" })
-$wsl = @()
-if ($Distro) { $wsl += @("-d", $Distro) }
-if ($Utilisateur) { $wsl += @("-u", $Utilisateur) }
-$wsl += @("--cd", "`"$Dossier`"", "--", "python3", "ondemand.py", "--port", $Port, "--idle", $Idle, "--allow", $allow)
+$cible = @()                       # distribution et utilisateur WSL
+if ($Distro) { $cible += @("-d", $Distro) }
+if ($Utilisateur) { $cible += @("-u", $Utilisateur) }
+$wsl = $cible + @("--cd", "`"$Dossier`"", "--", "python3", "ondemand.py", "--port", $Port, "--idle", $Idle, "--allow", $allow)
 
 # Le portier tourne au premier plan : tant qu'il vit, WSL reste allumé.
 $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wsl.exe" -Argument ($wsl -join " ")
@@ -57,8 +57,13 @@ $reglages = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -MultipleInstances IgnoreNew
 
-# une version déjà installée tourne peut-être : on l'arrête pour lancer la nouvelle
+# une version déjà installée tourne peut-être : on l'arrête pour lancer la nouvelle.
+# Arrêter la tâche ne coupe que wsl.exe : le portier et le launcher sont arrêtés dans WSL
+# (SIGTERM : le launcher arrête aussi ses serveurs), sinon l'ancien launcher garde le port.
 Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
+$arret = "pkill -f '[o]ndemand\.py --port $Port '; pkill -f '[i]alauncher\.py --port 8770 --no-browser'; " +
+         "for i in `$(seq 60); do pgrep -f '[i]alauncher\.py --port 8770 --no-browser' >/dev/null || exit 0; sleep 1; done"
+& "$env:SystemRoot\System32\wsl.exe" @cible -e sh -c $arret
 Register-ScheduledTask -TaskName $nom -Action $action -Trigger $declencheurs -Principal $principal `
     -Settings $reglages -Description "Portier à la demande d'IA Launcher (WSL, port $Port)" -Force | Out-Null
 
