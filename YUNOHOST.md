@@ -1,29 +1,37 @@
 # IA Launcher derrière YunoHost (branche `yunohost`)
 
-Cette branche = `main` + ce qu'il faut pour ouvrir IA Launcher depuis le portail
-YunoHost, à la demande :
+Cette branche = `main` + `ynh/`, le paquet YunoHost de la tuile (générique : voir le README,
+« Installation et démarrage », étape 3) + ce fichier, qui note **les réglages de chez moi**.
 
-- `ondemand.py` — **portier** : écoute sur le port 8765 (réseau local), démarre le
-  launcher à la première visite, lui transmet le trafic et l'arrête (avec llama-server,
-  sd-server, ACE-Step) après 10 min sans activité. « Activité » : une requête reçue
-  (l'interface ouverte en envoie toutes les 3 s), une connexion en cours, une tâche
-  (génération, téléchargement…) ou une requête que llama-server traite pour un agent —
-  voir la route `/api/activity` du launcher.
-- `windows/installer-portier.ps1` — tâche planifiée Windows qui démarre WSL et le portier
-  au démarrage du PC, sans ouvrir de session (à lancer une fois en administrateur).
-- Côté serveur : la tuile est l'app maison `pcproxy` (dépôt homelab), qui proxifie
-  `ia.gingerfox.run` vers `http://192.168.1.20:8765` derrière le SSO, sans transmettre
-  d'identifiants, et propose « Réveiller le PC » (Wake-on-LAN) quand le PC ne répond pas.
+## Mon installation
 
-Sécurité : ni le portier ni le launcher n'ont d'authentification. Le portier n'accepte
-que les adresses de `--allow` (le serveur YunoHost et le PC lui-même) et répond 403 aux
-autres. Le pare-feu Hyper-V de WSL (mode réseau `mirrored`) doit laisser entrer le port
-8765 : filtrer l'adresse source y bloque aussi les connexions de Windows vers WSL
-(constaté), d'où le filtrage dans le portier.
+- **Serveur de calcul** : le PC Windows (192.168.1.20), launcher dans WSL (`Ubuntu-24.04`,
+  mode réseau `mirrored`). Le portier tourne depuis un dossier de travail git dédié, toujours
+  sur cette branche : `git worktree add ~/ialauncher-portier yunohost` (on développe sur `main`
+  dans `~/ialauncher` sans le perturber). Démarrage automatique, dans `~/ialauncher-portier` :
 
-    New-NetFirewallHyperVRule -Name "WSL-projets-YunoHost" -Direction Inbound `
-      -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8765 -Action Allow
+      powershell.exe -ExecutionPolicy Bypass -File "$(wslpath -w windows/installer-portier.ps1)" \
+        -Dossier "$PWD" -Distro Ubuntu-24.04 -Utilisateur pentinou -Autorisees 192.168.1.179,192.168.1.20
 
-Le portier tourne depuis un dossier de travail git dédié, toujours sur cette branche
-(`git worktree add ~/ialauncher-portier yunohost`) : on peut développer sur `main` dans
-`~/ialauncher` sans le perturber. Mettre à jour : `cd ~/ialauncher-portier && git merge main`.
+  (192.168.1.20 : le PC lui-même, pour l'ouvrir par son adresse réseau.)
+- **Portail** : YunoHost `gingerfox.run` (192.168.1.179) ; tuile `ia.gingerfox.run` →
+  `http://192.168.1.20:8765`, avec le bouton « Réveiller le PC » (MAC de la carte Marvell AQtion).
+  Installée à l'origine avec le paquet `pcproxy` de mon dépôt homelab, dont `ynh/` est la
+  version générique.
+- **Journaux** : `/var/log/ialauncher` (`sudo sh linux/installer-logs.sh`), onglet Journaux.
+
+## Déployer une modification
+
+Commit + push de `main`, puis `cd ~/ialauncher-portier && git merge main` + push de
+`yunohost` ; vérifier `curl -s http://127.0.0.1:8765/api/activity` (`"occupe": false`), puis
+arrêter le launcher (`kill -TERM` du `ialauncher.py --port 8770`) : le portier le relance avec
+le nouveau code à la visite suivante. Un changement de `ondemand.py` demande de relancer la
+tâche planifiée (ou le PC).
+
+## Sécurité
+
+Ni le portier ni le launcher n'ont d'authentification : la connexion est celle du SSO
+YunoHost, et le portier n'accepte que les adresses de `--allow`. Le pare-feu Hyper-V de WSL
+laisse entrer le port 8765 (règle `WSL-projets-YunoHost` créée à la main le 2026-10-03 ; le
+script crée `IA-Launcher-portier`, équivalente, si on le relance avec `-Autorisees` ; filtrer
+l'adresse source dans le pare-feu bloquait aussi Windows → WSL, d'où le filtrage dans le portier).
