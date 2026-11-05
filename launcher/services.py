@@ -12,7 +12,7 @@ import threading
 import time
 import urllib.request
 
-from . import paths
+from . import journal, paths
 
 # Barres de progression : sd.cpp écrit « |====>   | 3/8 - 1.20s/it » (ou « MB/s » pendant
 # le chargement), tqdm (ACE-Step) « 38%|███▊      | 3/8 [00:01<00:02, … »
@@ -47,7 +47,7 @@ class Service:
             self.state, self.error, self.step = "starting", "", None
             self.started = time.time()
             kw = {"creationflags": 0x08000000} if sys.platform == "win32" else {"start_new_session": True}
-            logf = open(paths.logs_dir() / f"{self.name}.log", "wb", buffering=0)
+            logf = journal.open_service_log(self.name)
             self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          env=env, cwd=cwd, **kw)
             try:

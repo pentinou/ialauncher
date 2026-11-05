@@ -12,9 +12,9 @@ import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
-from . import (hardware, engine, jobs, models, catalog, estimate, recommend, presets, paths, agents,
+from . import (hardware, engine, jobs, journal, models, catalog, estimate, recommend, presets, paths, agents,
                sdcpp, music, gen_catalog, services, storage, civitai, updates)
 from .server import SERVER
 
@@ -113,9 +113,27 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # silence
         pass
 
+    def log_request(self, code="-", size="-"):
+        """Journal : les actions (POST) et les refus ou erreurs, pas les GET de suivi (1 par seconde)."""
+        try:
+            code = int(code)
+        except (TypeError, ValueError):
+            code = 0
+        err, self._err = getattr(self, "_err", ""), ""   # connexion keep-alive : ne pas le reporter
+        if self.command == "POST" or code >= 400:
+            journal.log(f"{self._who()} {self.command} {self.path} → {code}{' : ' + err if err else ''}")
+
+    def _who(self):
+        """Qui demande : l'IP réelle (derrière YunoHost et le portier) et le type d'appareil."""
+        ip = (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+        ua = self.headers.get("User-Agent", "")
+        dev = next((k for k in ("Android", "iPhone", "iPad", "Windows", "Macintosh", "Linux") if k in ua), "?")
+        return f"{ip} ({dev})"
+
     # ---------------------------------------------------------------- utilitaires
     def _json(self, obj, code=200):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self._err = str(obj.get("error") or "")[:300] if code >= 400 and isinstance(obj, dict) else ""
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -150,6 +168,7 @@ class Handler(BaseHTTPRequestHandler):
             self._get(u.path, q)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
+            journal.log(f"erreur sur GET {self.path} :\n{traceback.format_exc()}")
             self._json({"error": str(e)}, 500)
 
     def _get(self, path, q):
@@ -169,6 +188,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(engine.status())
         if path == "/api/jobs":
             return self._json([j.to_dict() for j in jobs.all_jobs()[:20]])
+        if path == "/api/logs":
+            return self._json(journal.files())
+        if path.startswith("/api/logs/"):
+            try:
+                return self._json(journal.tail(unquote(path[len("/api/logs/"):]), int(q.get("lines", 500))))
+            except ValueError as e:
+                return self._json({"error": str(e)}, 404)
         if path.startswith("/api/jobs/"):
             j = jobs.get(path.split("/")[3])
             return self._json(j.to_dict() if j else {"error": "inconnu"}, 200 if j else 404)
@@ -252,6 +278,7 @@ class Handler(BaseHTTPRequestHandler):
             self._post(u.path, body)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
+            journal.log(f"erreur sur POST {self.path} :\n{traceback.format_exc()}")
             self._json({"error": str(e)}, 500)
 
     def _post(self, path, b):
@@ -342,15 +369,19 @@ class Handler(BaseHTTPRequestHandler):
             e = gen_catalog.find(b["id"])
             if not e:
                 return self._json({"error": "modèle inconnu"}, 404)
-            j = jobs.start("gen-download", f"Téléchargement — {e['name']}", lambda job: sdcpp.download_model(job, b["id"]))
+            label = f"Téléchargement — {e['name']}"
+            if any(x.label == label for x in jobs.running("gen-download")):
+                return self._json({"error": "ce modèle est déjà en cours de téléchargement"}, 409)
+            j = jobs.start("gen-download", label, lambda job: sdcpp.download_model(job, b["id"]))
             return self._json({"job": j.to_dict()})
         if path == "/api/gen/run":
-            if jobs.running("gen"):
-                return self._json({"error": "une génération est déjà en cours"}, 409)
+            # une seule génération à la fois sur la carte graphique : les suivantes (autre onglet,
+            # autre navigateur, autre personne) attendent leur tour dans la file « gen »
             fn = music.generate if b.get("kind") == "music" else sdcpp.generate
             labels = {"image": "Image", "video": "Vidéo", "music": "Musique"}
-            j = jobs.start("gen", f"{labels.get(b.get('kind'), 'Génération')} — {b.get('prompt', '')[:50]}", lambda job: fn(job, b))
-            return self._json({"job": j.to_dict()})
+            j = jobs.start("gen", f"{labels.get(b.get('kind'), 'Génération')} — {b.get('prompt', '')[:50]}",
+                           lambda job: fn(job, b), queue="gen", who=self._who())
+            return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/gen/stop":
             (services.MUSIC if b.get("service") == "music" else services.SD).stop()
             return self._json({"ok": True})
@@ -376,7 +407,10 @@ class Handler(BaseHTTPRequestHandler):
             civitai.set_token(b.get("token", ""))
             return self._json({"ok": True})
         if path == "/api/civitai/download":
-            j = jobs.start("gen-download", f"Civitai — {b['model']['name']}", lambda job: civitai.download_file(job, b["type"], b))
+            label = f"Civitai — {b['model']['name']}"
+            if any(x.label == label for x in jobs.running("gen-download")):
+                return self._json({"error": "ce fichier est déjà en cours de téléchargement"}, 409)
+            j = jobs.start("gen-download", label, lambda job: civitai.download_file(job, b["type"], b))
             return self._json({"job": j.to_dict()})
         if path == "/api/music/install":
             if jobs.running("music-install"):

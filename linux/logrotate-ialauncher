@@ -1,0 +1,13 @@
+# Roulement des journaux d'IA Launcher (installé par linux/installer-logs.sh).
+# copytruncate : le launcher et ses serveurs gardent leur fichier ouvert pendant qu'on le copie.
+/var/log/ialauncher/*.log {
+    su @USER@ @USER@
+    daily
+    maxsize 20M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

@@ -206,6 +206,12 @@ Le bouton « libérer la carte graphique » décharge le modèle d'image / de mu
 bouton **⏏ tout décharger** de l'en-tête arrête tous les serveurs (texte, image / vidéo,
 musique) et rend la VRAM et la RAM qu'ils occupaient (une génération en cours est annulée).
 
+**Plusieurs navigateurs en même temps.** Les générations (image, vidéo, musique) passent
+une à la fois, dans l'ordre des demandes : celle demandée pendant qu'une autre tourne
+(autre onglet, téléphone, autre personne) attend son tour, avec « en attente : N tâches
+avant celle-ci » ; elle peut être annulée avant de démarrer. Après un rechargement de
+page, chaque navigateur ne reprend que les générations qu'il a lancées.
+
 ### Image et vidéo : stable-diffusion.cpp
 
 Le « llama.cpp de la diffusion » : même bibliothèque ggml, fichiers GGUF quantifiés,
@@ -397,10 +403,19 @@ outputs/   image/, video/, music/ : les générations et leurs réglages (.json)
 presets/   configurations enregistrées (JSON)
 agents/    scripts générés pour Claude Code / Codex / OpenCode
 cache/     en-têtes GGUF déjà lus, catalogue Hugging Face, sources llama.cpp
-logs/      llama-server.log, sd-server.log, ace-step.log (sortie du dernier lancement)
+logs/      launcher.log : qui a demandé quoi (IP, appareil), refus, erreurs, tâches
+           (début, attente, fin) ; llama-server.log, sd-server.log, ace-step.log : sortie
+           des serveurs, un bloc par lancement. Taille plafonnée (launcher.log 3 × 2 Mo,
+           les autres 2 × 5 Mo). Avec /var/log/ialauncher (ci-dessous), ils vont là.
 config.json   moteur choisi, dossiers de modèles ajoutés
 catalog-user.json  remplacements validés dans l'onglet Mises à jour, dépôts ignorés
 ```
+
+**Journaux dans /var/log (Linux).** `sudo sh linux/installer-logs.sh` crée
+`/var/log/ialauncher` (au nom de l'utilisateur) et `/etc/logrotate.d/ialauncher` : roulement
+quotidien, 7 jours gardés et compressés, au-delà de 20 Mo roulés au passage suivant de logrotate.
+Le launcher y écrit dès qu'il trouve ce dossier (après relance). L'onglet **📜 Journaux** les
+affiche en direct, où qu'ils soient.
 
 Les modèles trouvés dans les dossiers d'**Ollama** (`~/.ollama/models`,
 `/usr/share/ollama/.ollama/models`, et les profils Windows vus depuis WSL) et de
@@ -518,7 +533,8 @@ launcher/
   recommend.py         configuration optimale pour la machine (ordre des sacrifices)
   server.py            cycle de vie de llama-server : ligne de commande, démarrage, journal, PID
   agents.py            scripts et relais pour Claude Code / Codex / OpenCode
-  jobs.py              tâches longues (téléchargement, compilation) avec progression
+  jobs.py              tâches longues (téléchargement, compilation) avec progression ; file d'attente des générations
+  journal.py           journaux : launcher.log, sortie des serveurs, lecture pour l'onglet Journaux
   presets.py           presets JSON
   paths.py             dossiers de données (IALAUNCHER_HOME)
   services.py          serveurs de génération en arrière-plan (sd-server, ACE-Step), carte graphique partagée
@@ -532,6 +548,9 @@ ui/
   index.html, app.js, style.css   interface, sans framework ni build
   gen.js               onglets Image, Vidéo, Musique
   updates.js           onglet Mises à jour
+  logs.js              onglet Journaux (suivi en direct)
+linux/
+  installer-logs.sh, logrotate-ialauncher   journaux dans /var/log/ialauncher, roulement par logrotate
 ```
 
 Pour vérifier l'inventaire matériel seul : `python3 -m launcher.hardware`.
@@ -545,6 +564,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET | `/api/hardware`, `/api/live` | inventaire matériel ; valeurs qui bougent (VRAM, RAM, disque) |
 | GET/POST | `/api/engine`, `/api/engine/install`, `/api/engine/custom`, `/api/engine/select` | état et installation du moteur |
 | GET/POST | `/api/jobs`, `/api/jobs/<id>`, `/api/jobs/<id>/cancel` | tâches longues |
+| GET | `/api/logs`, `/api/logs/<fichier>?lines=` | journaux présents ; leurs dernières lignes (onglet Journaux) |
 | GET/POST | `/api/models`, `/api/models/profile`, `/api/models/dirs` | modèles locaux, profil, dossiers |
 | GET/POST | `/api/catalog`, `/api/hf/search`, `/api/hf/repo`, `/api/hf/profile`, `/api/hf/download`, `/api/hf/analyze` | catalogue et Hugging Face |
 | POST | `/api/estimate`, `/api/recommend`, `/api/fit`, `/api/cmdline` | estimation, config optimale, second avis llama-fit-params, ligne de commande |

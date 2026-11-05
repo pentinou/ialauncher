@@ -34,7 +34,20 @@ def engines_dir() -> Path: return sub("engines")
 def models_dir() -> Path: return sub("models")
 def presets_dir() -> Path: return sub("presets")
 def cache_dir() -> Path: return sub("cache")
-def logs_dir() -> Path: return sub("logs")
+VAR_LOGS = Path("/var/log/ialauncher")
+
+
+def logs_dir() -> Path:
+    """/var/log/ialauncher s'il a été préparé (linux/installer-logs.sh : logrotate le fait
+    tourner), sinon <home>/logs. Un IALAUNCHER_HOME à part (tests, 2e instance) garde les siens."""
+    if not os.environ.get("IALAUNCHER_HOME") and VAR_LOGS.is_dir() and os.access(VAR_LOGS, os.W_OK):
+        return VAR_LOGS
+    return sub("logs")
+
+
+def logs_rotated() -> bool:
+    """Les journaux sont-ils confiés à logrotate (sinon le launcher plafonne lui-même leur taille) ?"""
+    return logs_dir() == VAR_LOGS
 def diffusion_dir() -> Path: return sub("diffusion")
 def apps_dir() -> Path: return sub("apps")
 def config_file() -> Path: return sub("") / "config.json"
