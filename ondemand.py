@@ -8,11 +8,13 @@ ouverte en envoie toutes les 3 s), aucune connexion en cours, aucune tâche
 (génération, téléchargement, compilation) et aucune requête que llama-server serait
 en train de traiter pour un agent (voir /api/activity).
 
-    python3 ondemand.py [--listen 0.0.0.0] [--port 8765] [--idle 600]
+    python3 ondemand.py [--allow IP_DU_PORTAIL] [--listen 0.0.0.0] [--port 8765] [--idle 600]
 
-Pensé pour être joint par un seul proxy authentifié (SSO YunoHost) : comme le
-launcher, il n'a PAS d'authentification. --allow limite les adresses acceptées (les
-autres reçoivent un refus 403) ; un pare-feu peut s'y ajouter.
+Pensé pour être joint par un portail qui, lui, demande une connexion (YunoHost, nginx
+avec mot de passe…) : comme le launcher, le portier n'a PAS d'authentification.
+--allow liste les adresses acceptées (les autres reçoivent un refus 403). Par défaut,
+seule cette machine (127.0.0.1) : portail sur la même machine. Portail sur une autre
+machine : --allow 127.0.0.1,ADRESSE_DU_PORTAIL.
 """
 import argparse
 import http.client
@@ -125,7 +127,7 @@ class Launcher:
     def surveiller(self):
         while True:
             time.sleep(30)
-            if (self.vivant() and self.pret and self.connexions == 0
+            if (self.idle and self.vivant() and self.pret and self.connexions == 0
                     and time.time() - self.derniere > self.idle and not self.occupe()):
                 self.arreter(f"{self.idle} s sans activité")
 
@@ -203,20 +205,25 @@ def fabriquer_handler(lanceur, autorisees):
 
 
 def main():
+    if sys.platform == "win32":   # groupes de processus POSIX : Linux, macOS, WSL
+        sys.exit("Le portier tourne sous Linux, macOS ou WSL ; sous Windows, lancez-le dans WSL.")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--listen", default="0.0.0.0", help="adresse d'écoute (défaut 0.0.0.0)")
     ap.add_argument("--port", type=int, default=8765, help="port d'écoute (défaut 8765)")
-    ap.add_argument("--idle", type=int, default=600, help="secondes d'inactivité avant l'arrêt (défaut 600)")
-    ap.add_argument("--allow", default="",
-                    help="adresses IP acceptées, séparées par des virgules (défaut : toutes)")
+    ap.add_argument("--idle", type=int, default=600,
+                    help="secondes d'inactivité avant l'arrêt (défaut 600 ; 0 = ne jamais arrêter)")
+    ap.add_argument("--allow", default="127.0.0.1",
+                    help="adresses IP acceptées, séparées par des virgules (défaut 127.0.0.1 : cette machine "
+                         "seulement ; « * » = toutes, sans aucune protection)")
     a = ap.parse_args()
-    autorisees = {x.strip() for x in a.allow.split(",") if x.strip()}
+    autorisees = {x.strip() for x in a.allow.split(",") if x.strip() and x.strip() != "*"}
 
     lanceur = Launcher(a.idle)
     threading.Thread(target=lanceur.surveiller, daemon=True).start()
     httpd = ThreadingHTTPServer((a.listen, a.port), fabriquer_handler(lanceur, autorisees))
     httpd.daemon_threads = True
-    print(f"portier IA Launcher : http://{a.listen}:{a.port} (arrêt après {a.idle} s d'inactivité ; "
+    print(f"portier IA Launcher : http://{a.listen}:{a.port} ("
+          f"{f'arrêt après {a.idle} s d’inactivité' if a.idle else 'jamais arrêté'} ; "
           f"adresses acceptées : {', '.join(sorted(autorisees)) or 'toutes'})", flush=True)
 
     def quitter(*_):

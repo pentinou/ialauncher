@@ -12,7 +12,9 @@ et [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)), télécharge les m
 tout se règle dans son interface — pas de ComfyUI, pas de nœuds.
 
 Python 3.10+ **sans aucune dépendance** (bibliothèque standard uniquement). Interface web
-vanilla (HTML/JS/CSS), servie uniquement sur `127.0.0.1`. Linux, WSL2, Windows, macOS.
+vanilla (HTML/JS/CSS), servie sur `127.0.0.1` ; accessible depuis d'autres appareils à
+travers un portail avec connexion (YunoHost, nginx…), voir [Installation](#installation-et-démarrage).
+Linux, WSL2, Windows, macOS.
 
 ```bash
 git clone https://github.com/pentinou/ialauncher.git
@@ -81,13 +83,85 @@ paramètres, quantifiés en Q4) restent utilisables.
 
 ## Installation et démarrage
 
+Deux rôles, sur une seule machine ou sur deux :
+
+- le **serveur de calcul** : le launcher et la carte graphique (Linux, Windows + WSL2, macOS) ;
+- le **portail** (facultatif) : la page web, protégée par une connexion, qui ouvre le launcher
+  depuis d'autres appareils (téléphone, autre PC, extérieur) — YunoHost ou un serveur web.
+
+| Vous voulez… | Étapes |
+|---|---|
+| l'utiliser sur cette machine seulement | [1](#1-installer-le-launcher) |
+| l'ouvrir d'ailleurs, portail sur **la même machine** que le calcul | [1](#1-installer-le-launcher) → [2](#2-démarrage-automatique-et-accès-réseau-portier) → [3](#3-le-portail) |
+| l'ouvrir d'ailleurs, portail sur **une autre machine** (ex. YunoHost sur un petit serveur, calcul sur le PC de jeu) | [1](#1-installer-le-launcher) → [2](#2-démarrage-automatique-et-accès-réseau-portier) avec l'adresse du portail → [3](#3-le-portail) |
+
+Le launcher n'a **pas de mot de passe** : ne l'exposez jamais directement sur Internet.
+C'est le portail qui demande la connexion ; le portier (étape 2) n'accepte que lui.
+
+### 1. Installer le launcher
+
+Sur le serveur de calcul ([prérequis](#prérequis)) :
+
 ```bash
 git clone https://github.com/pentinou/ialauncher.git
 cd ialauncher
-python3 ialauncher.py
+python3 ialauncher.py          # ouvre http://127.0.0.1:8765
 ```
 
-Aucun `pip install`. Sous Windows, `py ialauncher.py` ou `python ialauncher.py`.
+Aucun `pip install`. Sous Windows sans WSL, `py ialauncher.py` (le portier de l'étape 2,
+lui, demande Linux, macOS ou WSL2).
+
+### 2. Démarrage automatique et accès réseau (portier)
+
+Le **portier** (`ondemand.py`) écoute à la place du launcher sur le port 8765, le démarre à
+la première visite et l'arrête après 10 min sans usage (la carte graphique est libérée).
+Il n'accepte que les adresses autorisées : cette machine, plus l'adresse du portail s'il
+est ailleurs. Dans le dossier `ialauncher` :
+
+| Serveur de calcul | Installer le démarrage automatique |
+|---|---|
+| Linux (systemd) | `sudo sh linux/installer-service.sh` |
+| Windows + WSL2 (dans WSL) | `powershell.exe -ExecutionPolicy Bypass -File "$(wslpath -w windows/installer-portier.ps1)" -Dossier "$PWD"` |
+| macOS, ou pour essayer | `python3 ondemand.py` (au premier plan) |
+
+Portail sur une autre machine : ajoutez son adresse, `--allow 192.168.1.10` (Linux,
+`ondemand.py`) ou `-Autorisees 192.168.1.10` (WSL). Sous WSL, le script ouvre aussi le port
+dans le pare-feu et vérifie que WSL partage l'adresse du PC (`networkingMode=mirrored` dans
+`%UserProfile%\.wslconfig`, Windows 11 22H2+). Autres réglages : `--idle 0` (ne jamais
+arrêter), `--port`. Vérifier depuis le portail : `curl -I http://ADRESSE_DU_CALCUL:8765`
+→ `200` (`403` : adresse non autorisée ; pas de réponse : pare-feu ou mode réseau de WSL).
+
+### 3. Le portail
+
+**YunoHost** : la tuile est un paquet de la branche `yunohost` (`ynh/`). Sur le serveur
+YunoHost :
+
+```bash
+git clone -b yunohost https://github.com/pentinou/ialauncher.git
+sudo yunohost app install ./ialauncher/ynh
+```
+
+Il demande le domaine, l'adresse du launcher (`http://127.0.0.1:8765` sur la même machine,
+`http://ADRESSE_DU_CALCUL:8765` sinon) et, en option, l'adresse MAC du serveur de calcul
+pour un bouton « Réveiller le PC » (Wake-on-LAN) quand il est éteint. La connexion est celle
+du portail YunoHost ; aucun identifiant n'est transmis au launcher.
+
+**Autre serveur web** (nginx ; mêmes réglages pour Caddy, Apache, Traefik…), en HTTPS :
+
+```nginx
+location / {
+    auth_basic "IA Launcher";                    # ou votre SSO
+    auth_basic_user_file /etc/nginx/ialauncher.htpasswd;   # sudo htpasswd -c … moi  (apache2-utils)
+    proxy_pass http://127.0.0.1:8765;            # ou http://ADRESSE_DU_CALCUL:8765
+    proxy_http_version 1.1;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;   # journal : qui a demandé quoi
+    proxy_set_header Authorization "";           # le mot de passe ne part pas vers le launcher
+    proxy_read_timeout 3600;                     # longues générations, réponses en flux
+    client_max_body_size 50m;                    # images d'entrée (img2img)
+}
+```
+
+### Lancer à la main, mettre à jour
 
 Pour **mettre à jour puis lancer** en une commande (Linux, macOS, WSL2) :
 
@@ -105,8 +179,8 @@ Options :
 ```
 python3 ialauncher.py --port 9000     # port de l'interface (défaut 8765 ; si occupé, le suivant libre)
 python3 ialauncher.py --no-browser    # ne pas ouvrir le navigateur
-python3 ialauncher.py --host 0.0.0.0  # écouter sur le réseau (défaut 127.0.0.1) — SANS authentification :
-                                      # à réserver à un proxy qui en a une (pare-feu limité à son adresse)
+python3 ialauncher.py --host 0.0.0.0  # écouter sur le réseau (défaut 127.0.0.1) — SANS authentification
+                                      # ni filtrage : préférez le portier (étape 2)
 IALAUNCHER_HOME=/data/ia python3 ialauncher.py   # changer le dossier de données (voir plus bas)
 ```
 
@@ -548,6 +622,7 @@ Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
 
 ```
 ialauncher.py          point d'entrée (argparse, lance web.serve)
+ondemand.py            portier : accès réseau filtré par adresse, démarrage à la demande, arrêt après inactivité
 start.sh               mise à jour (git pull, moteur llama.cpp) puis lancement
 launcher/
   web.py               serveur HTTP (ThreadingHTTPServer), routes /api/*, relais /proxy/*
@@ -579,7 +654,10 @@ ui/
   updates.js           onglet Mises à jour
   logs.js              onglet Journaux (suivi en direct)
 linux/
+  installer-service.sh   démarrage automatique (service systemd du portier)
   installer-logs.sh, logrotate-ialauncher   journaux dans /var/log/ialauncher, roulement par logrotate
+windows/
+  installer-portier.ps1  démarrage automatique sous WSL (tâche planifiée, pare-feu de WSL)
 ```
 
 Pour vérifier l'inventaire matériel seul : `python3 -m launcher.hardware`.
@@ -590,6 +668,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 
 | Méthode | Route | Rôle |
 |---|---|---|
+| GET | `/api/activity` | activité (tâches, requêtes en cours) : le portier n'arrête pas un launcher occupé |
 | GET | `/api/hardware`, `/api/live` | inventaire matériel ; valeurs qui bougent (VRAM, RAM, disque) |
 | GET/POST | `/api/engine`, `/api/engine/install`, `/api/engine/custom`, `/api/engine/select` | état et installation du moteur |
 | GET/POST | `/api/jobs`, `/api/jobs/<id>`, `/api/jobs/<id>/cancel` | tâches longues |
@@ -615,8 +694,18 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 ## Désinstallation
 
 Supprimez le dossier du dépôt et le dossier de données (`~/.ialauncher` ou
-`%LOCALAPPDATA%\ialauncher`, ou `IALAUNCHER_HOME`). Rien d'autre n'est écrit sur la
-machine ; les modèles Ollama / LM Studio ne sont pas touchés.
+`%LOCALAPPDATA%\ialauncher`, ou `IALAUNCHER_HOME`). Les modèles Ollama / LM Studio ne sont
+pas touchés. Si vous avez installé le démarrage automatique ou les journaux système :
+
+```bash
+sudo systemctl disable --now ialauncher && sudo rm /etc/systemd/system/ialauncher.service   # Linux
+sudo rm -r /var/log/ialauncher /etc/logrotate.d/ialauncher                                  # journaux
+```
+
+```powershell
+Unregister-ScheduledTask -TaskName "IA Launcher - portier" -Confirm:$false   # Windows + WSL (administrateur)
+Remove-NetFirewallHyperVRule -Name "IA-Launcher-portier"
+```
 
 ## Licence
 
