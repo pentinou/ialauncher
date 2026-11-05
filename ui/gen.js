@@ -14,6 +14,7 @@ const LS = {
   get(k, d) { try { const v = localStorage.getItem('ialauncher.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('ialauncher.' + k, JSON.stringify(v)); } catch (e) { /* stockage indisponible */ } },
 };
+G.nsfw = LS.get('nsfw', false);   // case « Contenu adulte » : vignettes et recherche Civitai
 
 // ------------------------------------------------------------------ navigation
 function showMode(m) {
@@ -41,6 +42,8 @@ function visualSkeleton(kind) {
   <section class="card"><h1>Moteur : stable-diffusion.cpp</h1>
     <p class="lead">Le « llama.cpp de l'image » : même bibliothèque (ggml), mêmes fichiers GGUF quantifiés, compilé pour votre carte. Il lit aussi vos checkpoints de Stable Diffusion WebUI / Forge, sans ComfyUI ni Python. Le launcher lance <code>sd-server</code> en arrière-plan et lui envoie vos réglages.</p>
     <div id="sd-engine-${kind}"></div></section>
+  <section class="card adultbar"><label class="switch"><input type="checkbox" class="nsfw-box" ${G.nsfw ? 'checked' : ''} onchange="setNsfw(this.checked)"> 🔞 <b>Contenu adulte</b></label>
+    <span class="muted small">Décoché : images Civitai tout public seulement, dans les vignettes des modèles, checkpoints et LoRA comme dans les résultats de recherche. Coché : tout est montré. Vaut pour les onglets Image et Vidéo.</span></section>
   <section class="card"><h1><span class="num">1</span> Modèle</h1>
     <p class="lead">${isV ? 'Un modèle vidéo = un transformer de diffusion + un encodeur de texte + un VAE (qui décode les images latentes en pixels). Le launcher télécharge les trois.' : 'Tous ces modèles tournent dans le même moteur (stable-diffusion.cpp, ci-dessus).'} Choisissez un modèle, puis ses poids (checkpoint), puis d’éventuels LoRA. Il manque un modèle ? « Chercher sur Civitai », type « Modèles de base ».</p>
     <div id="gm-${kind}"></div></section>
@@ -119,7 +122,7 @@ async function loadPreviews(kind) {
 const prevF = (kind, path) => ((G.prev[kind] || {}).files || {})[path];
 const prevB = (kind, base) => ((G.prev[kind] || {}).bases || {})[base];
 function pimg(kind, info) {
-  const adult = civState(kind).nsfw, im = info && (info.images || []).find(i => adult || i.nsfw <= 1);
+  const adult = G.nsfw, im = info && (info.images || []).find(i => adult || i.nsfw <= 1);
   return im ? im.url : '';
 }
 const baseOf = (kind, m) => m.base || (prevF(kind, m.path) || {}).baseModel || '';
@@ -149,6 +152,23 @@ function nodeOf(kind, m, nodes) {
   if (!m) return null;
   return nodes.find(n => n.key === m.id) || nodes.find(n => m.local && n.family === (m.family || m.arch || 'autre'));
 }
+// Carrousel horizontal (‹ ›, flèches du clavier) : `step` = début d'appel complété par « ,-1) » ou « ,1) »
+function carHtml(id, cards, step) {
+  return `<div class="carwrap"><button class="carbtn" onclick="${step},-1)" title="précédent">‹</button>
+    <div class="carousel" id="${id}" tabindex="0" onkeydown="if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();${step},event.key==='ArrowLeft'?-1:1)}">${cards}</div>
+    <button class="carbtn" onclick="${step},1)" title="suivant">›</button></div>`;
+}
+const carLeft = (id) => { const c = $(id); return c ? c.scrollLeft : 0; };
+// remet le défilement d'avant le redessin, puis amène la carte choisie au centre si elle est cachée
+function carRestore(id, left, center) {
+  const car = $(id); if (!car) return;
+  car.scrollLeft = left;
+  const sc = center && car.querySelector('.mcard.sel');
+  if (sc && (sc.offsetLeft < car.scrollLeft || sc.offsetLeft + sc.offsetWidth > car.scrollLeft + car.clientWidth)) {
+    car.scrollTo({left: sc.offsetLeft - (car.clientWidth - sc.offsetWidth) / 2, behavior: 'smooth'});
+  }
+}
+function scrollCar(id, d) { const c = $(id); if (c) c.scrollBy({left: d * c.clientWidth * 0.8, behavior: 'smooth'}); }
 function renderModels(kind) {
   const nodes = treeNodes(kind), sel = G.sel[kind];
   G.node = G.node || {};
@@ -173,42 +193,39 @@ function renderModels(kind) {
       ${e ? `<div id="gdl-${e.id}" onclick="event.stopPropagation()"></div>` : ''}
     </div>`;
   };
-  let h = `<div class="tlevel">Modèle <span class="muted small">— ${nodes.length} familles · ← → pour parcourir</span></div>
-    <div class="carwrap"><button class="carbtn" onclick="stepNode('${kind}',-1)" title="précédent">‹</button>
-    <div class="carousel" id="car-${kind}" tabindex="0" onkeydown="if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();stepNode('${kind}',event.key==='ArrowLeft'?-1:1)}">${nodes.map(card).join('')}</div>
-    <button class="carbtn" onclick="stepNode('${kind}',1)" title="suivant">›</button></div>`;
+  let h = `<div class="tpanel"><div class="thead"><span class="tstep">niveau 1</span><b>Modèle</b><span class="muted small">${nodes.length} familles · ← → pour parcourir</span></div>
+    ${carHtml('car-' + kind, nodes.map(card).join(''), `stepNode('${kind}'`)}</div>`;
   // niveau 2 : checkpoints du modèle choisi
   const items = (cur.entry ? [cur.entry] : []).concat(nodeCkpts(kind, cur));
-  h += `<div class="tlevel">Checkpoint <span class="muted small">— les poids utilisés pour générer${cur.entry ? ' : ceux d’origine, ou une version retravaillée par la communauté' : ''}</span></div>`;
-  h += items.length ? '<div class="ckgrid">' + items.map(m => {
-    const official = !m.local, on = sel && sel.id === m.id, pv = official ? null : prevF(kind, m.path), img = ckImg(kind, m), base = baseOf(kind, m);
-    return `<div class="ckpt ${on ? 'sel' : ''} ${m.installed ? '' : 'dim'}" data-id="${esc(m.id)}" onclick="selectGenModel('${kind}', this.dataset.id)" title="${esc((m.path || '') + (m.blurb ? '\n' + m.blurb : ''))}">
-      ${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : `<div class="noimg">${official ? '★' : '◆'}</div>`}
-      <div><div class="n">${on ? '✓ ' : ''}${official ? 'Poids d’origine' : esc(m.name)}${m.version ? ` <span class="muted small">${esc(m.version)}</span>` : ''}</div>
-        ${pv && pv.found && m.source !== 'Civitai' ? `<div class="small muted">Civitai : <a href="${esc(pv.url)}" target="_blank" onclick="event.stopPropagation()">${esc(pv.name)}${pv.version ? ' · ' + esc(pv.version) : ''} ↗</a></div>` : ''}
-        <div class="s">${base ? `<span class="badge acc">${esc(base)}</span>` : ''}<span>${fmtGB(m.size)}</span><span>${official ? esc(m.name) : esc(m.source)}</span>${m.installed ? '' : `<span class="badge warn">${official ? 'à télécharger (carte ci-dessus)' : 'modèle de base manquant'}</span>`}</div>
-        ${official ? `<details class="small muted" onclick="event.stopPropagation()"><summary>fichiers</summary>${m.files.map(f => `<div>${f.present ? '✓' : '·'} ${esc(f.label)} : <span class="mono">${esc(f.path.split('/').pop())}</span> (${fmtGB(f.size)})</div>`).join('')}</details>` : ''}</div>
-    </div>`;
-  }).join('') + '</div>' : '<p class="muted small">Aucun checkpoint de cette famille pour l’instant.</p>';
   const civFam = fam.civitai && fam.civitai.length && G.families[cur.family] ? cur.family : '';
-  if (civFam && kind === 'image') h += `<button class="link small" onclick="civOpen('${kind}','Checkpoint','${civFam}')">🔎 chercher des checkpoints ${esc(fam.label)} sur Civitai</button>`;
+  h += `<div class="tpanel"><div class="thead"><span class="tstep">niveau 2</span><b>Checkpoint</b><span class="muted small">de ${esc(cur.name)} — les poids utilisés pour générer${cur.entry ? ' : ceux d’origine, ou une version retravaillée par la communauté' : ''}</span>
+    ${civFam && kind === 'image' ? `<button class="link small tact" onclick="civOpen('${kind}','Checkpoint','${civFam}')">🔎 chercher des checkpoints ${esc(fam.label)} sur Civitai</button>` : ''}</div>`;
+  h += items.length ? carHtml('ckcar-' + kind, items.map(m => {
+    const official = !m.local, on = sel && sel.id === m.id, pv = official ? null : prevF(kind, m.path), img = ckImg(kind, m), base = baseOf(kind, m);
+    return `<div class="mcard ck ${on ? 'sel' : ''} ${m.installed ? '' : 'dim'}" data-id="${esc(m.id)}" onclick="selectGenModel('${kind}', this.dataset.id)" title="${esc((m.path || '') + (m.blurb ? '\n' + m.blurb : ''))}">
+      <div class="mimg">${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : `<span>${official ? '★' : '◆'}</span>`}</div>
+      <div class="n">${official ? 'Poids d’origine' : esc(m.name)}${m.version ? ` <span class="muted small">${esc(m.version)}</span>` : ''}</div>
+      ${pv && pv.found && m.source !== 'Civitai' ? `<div class="small muted">Civitai : <a href="${esc(pv.url)}" target="_blank" onclick="event.stopPropagation()">${esc(pv.name)}${pv.version ? ' · ' + esc(pv.version) : ''} ↗</a></div>` : ''}
+      <div class="s">${base ? `<span class="badge acc">${esc(base)}</span>` : ''}<span>${fmtGB(m.size)}</span><span>${official ? esc(m.name) : esc(m.source)}</span></div>
+      ${m.installed ? '' : `<div><span class="badge warn">${official ? 'à télécharger (carte du modèle)' : 'modèle de base manquant'}</span></div>`}
+      ${official ? `<details class="small muted mfoot" onclick="event.stopPropagation()"><summary>fichiers</summary>${m.files.map(f => `<div>${f.present ? '✓' : '·'} ${esc(f.label)} : <span class="mono">${esc(f.path.split('/').pop())}</span> (${fmtGB(f.size)})</div>`).join('')}</details>` : ''}
+    </div>`;
+  }).join(''), `stepCkpt('${kind}'`) : '<p class="muted small">Aucun checkpoint de cette famille pour l’instant.</p>';
+  h += '</div>';
   // niveau 3 : LoRA
-  h += `<div class="tlevel">LoRA <span class="muted small">— un LoRA est entraîné sur un modèle de base : il marche avec les checkpoints de sa famille, d’abord ceux de la même base. Cliquez pour l’ajouter au prompt (ou l’en retirer).</span></div>
-    <div id="glora-${kind}"></div>`;
-  if (civFam) h += `<button class="link small" onclick="civOpen('${kind}','LORA','${civFam}')">🔎 chercher des LoRA ${esc(fam.label)} sur Civitai</button>`;
+  h += `<div class="tpanel"><div class="thead"><span class="tstep">niveau 3</span><b>LoRA</b><span class="muted small" id="glorah-${kind}"></span>
+    ${civFam ? `<button class="link small tact" onclick="civOpen('${kind}','LORA','${civFam}')">🔎 chercher des LoRA ${esc(fam.label)} sur Civitai</button>` : ''}</div>
+    <div class="muted small">Un LoRA ajoute un style, un personnage ou un concept. Il est entraîné sur un modèle de base : il marche avec les checkpoints de sa famille, d’abord ceux de la même base. Cliquez pour l’ajouter au prompt, recliquez pour l’en retirer.</div>
+    <div id="glora-${kind}"></div></div>`;
   if (kind === 'image') {
     h += `<div class="row-inline muted small" style="margin-top:12px"><span>Checkpoints déjà sur ce PC ${G.webui && G.webui.length ? '(repris de ' + esc(G.webui.map(w => w.split('/').pop()).join(', ')) + ')' : ''} — ajouter un dossier :</span><input id="gen-add-dir" placeholder="/chemin/vers/dossier" size="34"><button class="btn small" onclick="addGenDir()">ajouter</button></div>`;
   }
   h += `<div class="small muted" style="margin-top:6px">${S.hw ? fmtGB(S.hw.disk.free) + ' libres sur le disque · ' : ''}<button class="link" onclick="showMode('storage')">voir et libérer l’espace occupé →</button></div>`;
   h += civitaiPanel(kind);
-  const old = $('car-' + kind), left = old ? old.scrollLeft : 0;
+  const left = carLeft('car-' + kind), ckLeft = carLeft('ckcar-' + kind);
   $('gm-' + kind).innerHTML = h;
-  const car = $('car-' + kind);
-  car.scrollLeft = left;
-  const sc = car.querySelector('.mcard.sel');
-  if (sc && (sc.offsetLeft < car.scrollLeft || sc.offsetLeft + sc.offsetWidth > car.scrollLeft + car.clientWidth)) {
-    car.scrollTo({left: sc.offsetLeft - (car.clientWidth - sc.offsetWidth) / 2, behavior: 'smooth'});
-  }
+  carRestore('car-' + kind, left, true);
+  carRestore('ckcar-' + kind, ckLeft, true);
   renderLoras(kind);
   renderCivitai(kind);
 }
@@ -221,6 +238,15 @@ function pickNode(kind, key) {
     if (first) { selectGenModel(kind, first.id); return; }
   }
   renderModels(kind);
+}
+// ‹ › des checkpoints : passe au checkpoint téléchargé précédent / suivant du modèle
+function stepCkpt(kind, d) {
+  const n = treeNodes(kind).find(x => x.key === G.node[kind]); if (!n) return;
+  const items = (n.entry ? [n.entry] : []).concat(nodeCkpts(kind, n)).filter(m => m.installed);
+  if (!items.length) return scrollCar('ckcar-' + kind, d);
+  const i = items.findIndex(m => G.sel[kind] && m.id === G.sel[kind].id);
+  selectGenModel(kind, items[(i + d + items.length) % items.length].id);
+  const car = $('ckcar-' + kind); if (car) car.focus({preventScroll: true});
 }
 function stepNode(kind, d) {
   const nodes = treeNodes(kind), i = nodes.findIndex(n => n.key === G.node[kind]);
@@ -305,6 +331,7 @@ function renderForm(kind) {
   }
   if (!isV) h += `<div class="grow"><label>Hires fix</label><div><label class="switch"><input type="checkbox" ${f.hires ? 'checked' : ''} onchange="setGen('image','hires',this.checked)"> agrandir puis repasser</label>
     ${f.hires ? ` ×${num('hires_scale', 1, 4, 0.25, 60)} débruitage ${num('hires_denoise', 0, 1, 0.05, 60)} <select onchange="setGen('image','hires_upscaler',this.value)">${opt(['Latent', 'Latent (bicubic)', 'Lanczos', 'Nearest'], f.hires_upscaler)}</select>` : ''}</div></div>`;
+  if (!isV) h += xyzHtml(kind);
   h += `<details class="gadv"><summary>Mémoire et avancé</summary>
     <div class="grow"><label>Poids</label><div><select onchange="setGen('${kind}','offload',this.value)">
       <option value="auto" ${f.offload === 'auto' ? 'selected' : ''}>auto — sd.cpp place les poids (VRAM, puis RAM, puis disque)</option>
@@ -316,11 +343,12 @@ function renderForm(kind) {
   h += `<div class="row-inline" style="margin-top:12px"><button class="btn primary" id="grun-${kind}" onclick="runGen('${kind}')">▶ Générer</button>
     <button class="btn" onclick="resetGenDefaults('${kind}')">réglages conseillés</button></div>`;
   box.innerHTML = h;
+  if (!isV) updateXyz(kind);
 }
 function setGen(kind, k, v, quiet) {
   G.form[kind][k] = v;
   if (k === 'prompt') markLoras(kind);
-  LS.set('form.' + kind, {prompt: G.form[kind].prompt, negative: G.form[kind].negative, offload: G.form[kind].offload, vae_tiling: G.form[kind].vae_tiling, batch: G.form[kind].batch});
+  LS.set('form.' + kind, {prompt: G.form[kind].prompt, negative: G.form[kind].negative, offload: G.form[kind].offload, vae_tiling: G.form[kind].vae_tiling, batch: G.form[kind].batch, xyz: G.form[kind].xyz});
   if (!quiet) renderForm(kind);
 }
 function setSize(kind, w, h) { G.form[kind].width = w; G.form[kind].height = h; renderForm(kind); }
@@ -358,21 +386,33 @@ function renderLoras(kind) {
   const prompt = (G.form[kind] || {}).prompt || '';
   const card = (x, dim) => {
     const img = pimg(kind, x.pv);
-    return `<div class="lcard ${prompt.includes('<lora:' + x.name + ':') ? 'on' : ''} ${dim ? 'dim' : ''}" data-lora="${esc(x.name)}" onclick="toggleLora('${kind}', ${x.i})"
-      title="${esc(x.name + ' · ' + (famLabel(x.family) || 'famille inconnue') + (x.base ? ' · ' + x.base : '') + (x.words.length ? ' · mots déclencheurs : ' + x.words.join(', ') : '') + ' · ' + x.source)}">
-      ${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : '<div class="noimg">◇</div>'}
-      <div class="ln">${esc(x.pv.found ? x.pv.name : x.name)}</div><div class="lb">${esc(x.base || famLabel(x.family) || '?')}${x.pv.url ? ` · <a href="${esc(x.pv.url)}" target="_blank" onclick="event.stopPropagation()">↗</a>` : ''}</div></div>`;
+    return `<div class="mcard ck ${prompt.includes('<lora:' + x.name + ':') ? 'sel' : ''} ${dim ? 'dim' : ''}" data-lora="${esc(x.name)}" onclick="toggleLora('${kind}', ${x.i})" title="${esc(x.path)}">
+      <div class="mimg">${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : '<span>◇</span>'}</div>
+      <div class="n">${esc(x.pv.found ? x.pv.name : x.name)}</div>
+      ${x.pv.found && x.pv.url ? `<div class="small muted">Civitai : <a href="${esc(x.pv.url)}" target="_blank" onclick="event.stopPropagation()">${x.pv.version ? esc(x.pv.version) : 'fiche'} ↗</a></div>` : ''}
+      <div class="s">${x.base ? `<span class="badge acc">${esc(x.base)}</span>` : `<span class="badge">${esc(famLabel(x.family) || 'famille inconnue')}</span>`}<span>${esc(x.source)}</span></div>
+      ${x.words.length ? `<div class="small muted">mots déclencheurs : ${esc(x.words.join(', '))}</div>` : ''}</div>`;
   };
+  // même base d'abord, puis le reste de la famille, séparés par une étiquette verticale
+  const sep = (t) => `<div class="cardsep">${t}</div>`;
+  const left = carLeft('glcar-' + kind), left2 = carLeft('glcar2-' + kind), open2 = !!document.querySelector(`#glora-${kind} details[open]`);
   let h = '';
-  if (same.length) h += `<div class="small">Faits pour <b>${esc(base)}</b> :</div><div class="lgrid">${same.map(x => card(x)).join('')}</div>`;
-  if (near.length) h += `<div class="small">${same.length ? 'Autres' : 'LoRA'} de la famille ${esc(famLabel(fam))}${base && same.length ? ' — à essayer' : ''} :</div><div class="lgrid">${near.map(x => card(x)).join('')}</div>`;
-  if (!same.length && !near.length) h += `<p class="muted small">Aucun LoRA ${esc(famLabel(fam) || '')} pour l’instant.</p>`;
-  if (other.length) h += `<details class="small"><summary class="muted">autres familles / famille inconnue (${other.length}) — sans effet ou imprévisibles sur ce modèle</summary><div class="lgrid">${other.map(x => card(x, true)).join('')}</div></details>`;
+  if (same.length || near.length) {
+    h += carHtml('glcar-' + kind, (same.length ? sep('Faits pour ' + esc(base)) + same.map(x => card(x)).join('') : '')
+      + (near.length ? sep((same.length ? 'Autres de la famille — à essayer' : 'Famille ' + esc(famLabel(fam)))) + near.map(x => card(x)).join('') : ''), `scrollCar('glcar-${kind}'`);
+  } else h += `<p class="muted small">Aucun LoRA ${esc(famLabel(fam) || '')} sur ce PC pour l’instant${G.families[fam] && G.families[fam].civitai.length ? ' : « 🔎 chercher des LoRA » ci-dessus' : ''}.</p>`;
+  if (other.length) h += `<details class="small" ${open2 ? 'open' : ''}><summary class="muted">autres familles / famille inconnue (${other.length}) — sans effet ou imprévisibles sur ce modèle</summary>${carHtml('glcar2-' + kind, other.map(x => card(x, true)).join(''), `scrollCar('glcar2-${kind}'`)}</details>`;
   box.innerHTML = h + `<div class="muted small">Dossier : <span class="mono">${esc(l.dir)}</span> (y compris ceux de votre WebUI, par liens).</div>`;
+  carRestore('glcar-' + kind, left);
+  carRestore('glcar2-' + kind, left2);
+  markLoras(kind);
 }
 function markLoras(kind) {
   const prompt = (G.form[kind] || {}).prompt || '';
-  document.querySelectorAll(`#glora-${kind} [data-lora]`).forEach(c => c.classList.toggle('on', prompt.includes('<lora:' + c.dataset.lora + ':')));
+  let n = 0;
+  document.querySelectorAll(`#glora-${kind} [data-lora]`).forEach(c => { const on = prompt.includes('<lora:' + c.dataset.lora + ':'); c.classList.toggle('sel', on); n += on; });
+  const m = G.sel[kind], hd = $('glorah-' + kind);
+  if (hd) hd.textContent = m ? `pour ${m.name}${n ? ` — ${n} dans le prompt` : ''}` : '';
 }
 function toggleLora(kind, i) {
   const m = G.sel[kind], x = loraList(kind, m)[i], f = G.form[kind];
@@ -401,20 +441,26 @@ function civitaiPanel(kind) {
       <select id="civt-${kind}" onchange="$('civf-${kind}').disabled = this.value === 'Base'">${(kind === 'video' ? [['LORA', 'LoRA'], ['Base', 'Modèles de base']] : [['Checkpoint', 'Checkpoints'], ['LORA', 'LoRA'], ['Base', 'Modèles de base']]).map(([v, l]) => `<option value="${v}" ${c.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="civf-${kind}" ${c.type === 'Base' ? 'disabled' : ''}><option value="">toutes les familles compatibles</option>${fams.map(f => `<option value="${f}" ${c.family === f ? 'selected' : ''}>${esc(G.families[f].label)}</option>`).join('')}</select>
       <select id="civs-${kind}">${['Most Downloaded', 'Highest Rated', 'Newest'].map((v, i) => `<option value="${v}" ${c.sort === v ? 'selected' : ''}>${['les plus téléchargés', 'les mieux notés', 'les plus récents'][i]}</option>`).join('')}</select>
-      <label class="switch small"><input type="checkbox" id="civn-${kind}" ${c.nsfw ? 'checked' : ''} onchange="setNsfw('${kind}', this.checked)"> contenu adulte</label>
       <button class="btn" onclick="civSearch('${kind}')">chercher</button>
     </div>
     <div id="civr-${kind}"></div><div id="civfiche-${kind}"></div></details>`;
 }
-function civState(kind) { G.civ = G.civ || {}; return G.civ[kind] = G.civ[kind] || {nsfw: LS.get('nsfw', false)}; }
-function setNsfw(kind, v) { civState(kind).nsfw = v; LS.set('nsfw', v); renderModels(kind); }
+function civState(kind) { G.civ = G.civ || {}; return G.civ[kind] = G.civ[kind] || {}; }
+function setNsfw(v) {
+  G.nsfw = v; LS.set('nsfw', v);
+  document.querySelectorAll('.nsfw-box').forEach(b => { b.checked = v; });
+  for (const k of ['image', 'video']) {
+    if ($('gm-' + k) && $('gm-' + k).innerHTML) renderModels(k);
+    if (civState(k).items && civState(k).items.length) civSearch(k);   // relancer avec le nouveau filtre
+  }
+}
 async function civSearch(kind, more) {
   const c = civState(kind);
   if (!more) Object.assign(c, {q: $('civq-' + kind).value.trim(), type: $('civt-' + kind).value, family: $('civf-' + kind).value,
-    sort: $('civs-' + kind).value, nsfw: $('civn-' + kind).checked, items: [], next: ''});
+    sort: $('civs-' + kind).value, items: [], next: ''});
   $('civr-' + kind).insertAdjacentHTML('beforeend', '<p class="muted small" id="civwait">Recherche sur Civitai… (quelques secondes)</p>');
   try {
-    const r = await api(`/api/civitai/search?q=${encodeURIComponent(c.q)}&type=${c.type}&family=${c.type === 'Base' ? kind : c.family}&sort=${encodeURIComponent(c.sort)}&nsfw=${c.nsfw ? 1 : 0}&cursor=${more ? c.next : ''}`);
+    const r = await api(`/api/civitai/search?q=${encodeURIComponent(c.q)}&type=${c.type}&family=${c.type === 'Base' ? kind : c.family}&sort=${encodeURIComponent(c.sort)}&nsfw=${G.nsfw ? 1 : 0}&cursor=${more ? c.next : ''}`);
     c.items = (c.items || []).concat(r.items); c.next = r.next; c.hasToken = r.has_token;
   } catch (e) { toast('Civitai : ' + e.message, 6000); }
   renderCivitai(kind);
@@ -530,6 +576,14 @@ async function runGen(kind) {
   }
   if (kind === 'video') { if (inp.init) req.init_image = inp.init; if (inp.end) req.end_image = inp.end; }
   if (!f.hires) delete req.hires;
+  delete req.xyz;
+  if (kind === 'image' && xyzState(kind).some(a => a.p)) {
+    let axes; try { axes = xyzAxes(kind); } catch (e) { toast('Tableau : ' + e.message, 8000); return; }
+    const n = axes.reduce((a, x) => a * x.values.length, 1);
+    if (n > 200) { toast(`${n} images : le tableau est limité à 200`, 6000); return; }
+    if (n > 40 && !confirm(`Générer ${n} images ?`)) return;
+    req.grid = axes.map(a => ({param: a.param, values: a.values}));
+  }
   try {
     const r = await api('/api/gen/run', req);
     $('grun-' + kind).disabled = true;
@@ -537,6 +591,150 @@ async function runGen(kind) {
     watchGen(kind, r.job.id);
   } catch (e) { toast(e.message, 6000); }
 }
+// ------------------------------------------------------------------ tableau X/Y/Z
+// (le « X/Y/Z plot » de la WebUI : mêmes écritures, « 1-5 (+2) », « 1-10 [4] »…)
+const XYZ = [['', '—'], ['seed', 'Graine'], ['steps', 'Étapes'], ['cfg', 'CFG'], ['sampler', 'Sampler'], ['scheduler', 'Planning'],
+  ['checkpoint', 'Checkpoint'], ['prompt_sr', 'Prompt : chercher / remplacer'], ['width', 'Largeur'], ['height', 'Hauteur'],
+  ['clip_skip', 'Clip skip'], ['strength', 'Force (img2img)']];
+const XYZ_INT = ['seed', 'steps', 'width', 'height', 'clip_skip'], XYZ_NUM = XYZ_INT.concat(['cfg', 'strength']);
+const XYZ_HINT = {seed: '1, 2, 3', steps: '10-40 (+10)', cfg: '1-9 (+2)', sampler: 'euler, dpm++2m', scheduler: 'karras, simple',
+  checkpoint: '＋ ajouter… à droite', prompt_sr: 'chat, chien, renard', width: '768, 1024', height: '768, 1024', clip_skip: '1, 2', strength: '0.3-0.9 [4]'};
+function xyzState(kind) {
+  const f = G.form[kind];
+  if (!Array.isArray(f.xyz) || f.xyz.length !== 3) f.xyz = [{p: '', t: ''}, {p: '', t: ''}, {p: '', t: ''}];
+  return f.xyz;
+}
+const ckptList = (kind) => (G.models[kind] || []).filter(m => m.installed);
+function xyzHtml(kind) {
+  const ax = xyzState(kind);
+  const en = (p) => p === 'sampler' ? SAMPLERS : p === 'scheduler' ? SCHEDULERS : p === 'checkpoint' ? ckptList(kind).map(m => m.name) : null;
+  return `<details class="gadv xyz" ${ax.some(a => a.p) ? 'open' : ''}><summary>Tableau de variations X/Y/Z <span id="xyzn-${kind}"></span></summary>
+    <div class="muted small" style="margin:6px 0">Une image par combinaison : X en colonnes, Y en lignes, Z = un tableau par valeur. Les autres réglages restent ceux ci-dessus ; une graine aléatoire est tirée une seule fois pour tout le tableau, pour ne comparer que le paramètre.</div>
+    ${['X (colonnes)', 'Y (lignes)', 'Z (tableaux)'].map((lab, i) => {
+      const a = ax[i], e = en(a.p);
+      return `<div class="grow"><label>${lab}</label><div>
+        <select onchange="setAxis('${kind}',${i},'p',this.value)">${XYZ.map(([v, l]) => `<option value="${v}" ${v === a.p ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        ${a.p ? `<input id="xyzt-${kind}-${i}" value="${esc(a.t)}" placeholder="${esc(XYZ_HINT[a.p])}" style="flex:1;min-width:150px" oninput="setAxis('${kind}',${i},'t',this.value)">` : ''}
+        ${e ? `<select onchange="addAxisValue('${kind}',${i},this.value);this.value=''"><option value="">＋ ajouter…</option>${e.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : ''}
+        <span class="small" id="xyzp-${kind}-${i}"></span></div></div>`;
+    }).join('')}
+    <div class="small muted" style="margin-top:6px"><b>Écrire les valeurs :</b> liste <span class="mono">1, 3, 5</span> · de 1 en 1 <span class="mono">1-5</span> · avec un pas <span class="mono">1-5 (+2)</span> → 1, 3, 5, ou <span class="mono">10-4 (-3)</span> → 10, 7, 4 · N valeurs régulières <span class="mono">1-10 [4]</span> → 1, 4, 7, 10. Décimales avec un point (<span class="mono">3.5</span>). Textes séparés par des virgules, entre guillemets s’ils en contiennent. <b>Chercher / remplacer :</b> la 1<sup>re</sup> valeur est un texte du prompt, remplacé tour à tour par chacune (<span class="mono">chat, chien, renard</span>) ; pour le poids d’un LoRA <span class="mono">&lt;lora:x:0.8&gt;</span> : <span class="mono">:0.8&gt;, :0.4&gt;, :1.2&gt;</span>.</div>
+  </details>`;
+}
+function setAxis(kind, i, k, v) {
+  const ax = xyzState(kind);
+  ax[i][k] = v;
+  if (k === 'p') { ax[i].t = ''; setGen(kind, 'xyz', ax); return; }
+  setGen(kind, 'xyz', ax, true);
+  updateXyz(kind);
+}
+function addAxisValue(kind, i, v) {
+  if (!v) return;
+  const ax = xyzState(kind), q = v.includes(',') ? `"${v}"` : v;
+  ax[i].t = ax[i].t.trim() ? ax[i].t.replace(/[,\s]*$/, '') + ', ' + q : q;
+  const inp = $(`xyzt-${kind}-${i}`); if (inp) inp.value = ax[i].t;
+  setGen(kind, 'xyz', ax, true);
+  updateXyz(kind);
+}
+// Valeurs d'un axe à partir de son écriture ; lève une erreur lisible sinon.
+function parseAxis(kind, p, t) {
+  // virgules hors guillemets
+  const toks = t.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(x => x.trim()).filter(Boolean).map(x => x.replace(/^"(.*)"$/, '$1'));
+  if (!toks.length) throw new Error('aucune valeur');
+  let vals = [];
+  if (XYZ_NUM.includes(p)) {
+    const N = '(-?\\d+(?:\\.\\d+)?)', rx = (s) => new RegExp('^' + s + '$');
+    for (const tok of toks) {
+      let m;
+      if ((m = tok.match(rx(`${N}\\s*-\\s*${N}\\s*\\(\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*\\)`)))) {
+        const [a, b, st] = [+m[1], +m[2], +m[3]];
+        if (!st || (b - a) * st < 0) throw new Error(`« ${tok} » : le pas ne mène pas de ${a} à ${b}`);
+        for (let v = a, k = 0; (st > 0 ? v <= b + 1e-9 : v >= b - 1e-9) && k < 500; v = a + st * ++k) vals.push(v);
+      } else if ((m = tok.match(rx(`${N}\\s*-\\s*${N}\\s*\\[\\s*(\\d+)\\s*\\]`)))) {
+        const [a, b, n] = [+m[1], +m[2], +m[3]];
+        if (n < 1) throw new Error(`« ${tok} » : au moins 1 valeur`);
+        for (let k = 0; k < n; k++) vals.push(n === 1 ? a : a + (b - a) * k / (n - 1));
+      } else if ((m = tok.match(rx(`${N}\\s*-\\s*${N}`)))) {
+        const [a, b] = [+m[1], +m[2]], st = b >= a ? 1 : -1;
+        for (let v = a, k = 0; (st > 0 ? v <= b : v >= b) && k < 500; v += st, k++) vals.push(v);
+      } else if ((m = tok.match(rx(N)))) vals.push(+m[1]);
+      else throw new Error(`« ${tok} » : écriture non reconnue`);
+    }
+    vals = vals.map(v => XYZ_INT.includes(p) ? Math.round(v) : +v.toFixed(4));
+  } else {
+    vals = toks;
+    const known = p === 'sampler' ? SAMPLERS : p === 'scheduler' ? SCHEDULERS : p === 'checkpoint' ? ckptList(kind).map(m => m.name) : null;
+    const bad = known ? vals.filter(v => !known.includes(v)) : [];
+    if (bad.length) throw new Error(`inconnu : ${bad.join(', ')}`);
+    if (p === 'prompt_sr' && !(G.form[kind].prompt || '').includes(vals[0])) throw new Error(`« ${vals[0]} » n’est pas dans le prompt`);
+  }
+  if (vals.length > 50) throw new Error(`${vals.length} valeurs : 50 au plus par axe`);
+  return vals;
+}
+// axes renseignés, avec leurs valeurs (les checkpoints passent de leur nom à leur id)
+function xyzAxes(kind) {
+  return xyzState(kind).filter(a => a.p).map(a => {
+    const shown = parseAxis(kind, a.p, a.t);
+    const values = a.p === 'checkpoint' ? shown.map(n => ckptList(kind).find(m => m.name === n).id) : shown;
+    return {param: a.p, values, shown};
+  });
+}
+function updateXyz(kind) {
+  let n = 1, any = false, ok = true;
+  xyzState(kind).forEach((a, i) => {
+    const el = $(`xyzp-${kind}-${i}`); if (!el || !a.p) return;
+    any = true;
+    try {
+      const v = parseAxis(kind, a.p, a.t); n *= v.length;
+      el.className = 'small muted'; el.textContent = `→ ${v.length > 12 ? v.slice(0, 12).join(', ') + '…' : v.join(', ')} (${v.length})`;
+    } catch (e) { ok = false; el.className = 'small warn'; el.textContent = a.t.trim() ? e.message : ''; }
+  });
+  const s = $('xyzn-' + kind), b = $('grun-' + kind);
+  if (s) s.textContent = any ? (ok ? `— ${n} image${n > 1 ? 's' : ''}` : '— à corriger') : '';
+  if (b && !b.disabled) b.textContent = any && ok ? `▶ Générer le tableau (${n} image${n > 1 ? 's' : ''})` : '▶ Générer';
+}
+const xyzFmt = (kind, a, v) => a.param === 'checkpoint' ? ((G.models[kind] || []).find(m => m.id === v) || {}).name || v : v;
+function showGrid(kind, g) {
+  G.grid = G.grid || {}; G.grid[kind] = g;
+  const out = $('go-' + kind); if (!out) return;
+  const [X, Y, Z] = g.axes;
+  let h = '';
+  Z.values.forEach((zv, zi) => {
+    if (Z.param) h += `<div class="glab">${esc(Z.label)} : ${esc(xyzFmt(kind, Z, zv))}</div>`;
+    h += `<div class="xyzwrap"><table class="xyzgrid"><tr><th></th>${X.values.map(v => `<th>${X.param ? esc(X.label + ' : ' + xyzFmt(kind, X, v)) : ''}</th>`).join('')}</tr>`;
+    Y.values.forEach((yv, yi) => {
+      h += `<tr><th>${Y.param ? esc(Y.label + ' : ' + xyzFmt(kind, Y, yv)) : ''}</th>` + X.values.map((xv, xi) => {
+        const c = g.cells.find(c => c.x === xi && c.y === yi && c.z === zi);
+        return `<td>${c && c.file ? `<a href="${c.file.url}" target="_blank" title="${esc(c.label)}"><img src="${c.file.url}" loading="lazy" alt=""></a>` : `<div class="xyzerr" title="${esc(c ? c.error || '' : '')}">${esc(c ? (c.error || '').slice(0, 80) : 'pas générée')}</div>`}</td>`;
+      }).join('') + '</tr>';
+    });
+    h += `</table></div><button class="btn small" onclick="downloadGrid('${kind}', ${zi})">⬇ grille en une image PNG</button>`;
+  });
+  out.innerHTML = h + `<div class="small muted" style="margin-top:6px">${g.seed != null ? `Graine commune : <span class="mono">${g.seed}</span> · ` : ''}chaque image est aussi dans la galerie avec ses réglages ; cliquez pour l’ouvrir en grand.</div>`;
+}
+// la grille avec ses titres, dessinée dans un canvas puis téléchargée
+async function downloadGrid(kind, zi) {
+  const g = (G.grid || {})[kind]; if (!g) return;
+  const [X, Y, Z] = g.axes, cells = g.cells.filter(c => c.z === zi), im = {};
+  await Promise.all(cells.filter(c => c.file).map(c => new Promise(r => { const i = new Image(); i.onload = () => { im[c.x + ',' + c.y] = i; r(); }; i.onerror = r; i.src = c.file.url; })));
+  const all = Object.values(im); if (!all.length) { toast('Aucune image dans ce tableau'); return; }
+  const cw = Math.max(...all.map(i => i.naturalWidth)), ch = Math.max(...all.map(i => i.naturalHeight));
+  const fs = Math.max(18, Math.round(cw / 22)), head = Z.param ? fs * 2.4 : 0, top = X.param ? fs * 2.2 : 0, left = Y.param ? Math.round(cw * 0.5) : 0;
+  const cv = document.createElement('canvas');
+  cv.width = left + cw * X.values.length; cv.height = head + top + ch * Y.values.length;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#111'; ctx.font = `${fs}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (Z.param) ctx.fillText(`${Z.label} : ${xyzFmt(kind, Z, Z.values[zi])}`, cv.width / 2, head / 2, cv.width - 20);
+  if (X.param) X.values.forEach((v, i) => ctx.fillText(`${X.label} : ${xyzFmt(kind, X, v)}`, left + cw * i + cw / 2, head + top / 2, cw - 10));
+  if (Y.param) Y.values.forEach((v, i) => ctx.fillText(`${Y.label} : ${xyzFmt(kind, Y, v)}`, left / 2, head + top + ch * i + ch / 2, left - 10));
+  for (const [k, i] of Object.entries(im)) {
+    const [x, y] = k.split(',').map(Number);
+    ctx.drawImage(i, left + cw * x + (cw - i.naturalWidth) / 2, head + top + ch * y + (ch - i.naturalHeight) / 2);
+  }
+  cv.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `tableau-${g.seed ?? 'xyz'}${Z.param ? '-' + (zi + 1) : ''}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
+}
+
 // Une génération à la fois sur la carte graphique : celle-ci attend peut-être son tour (autre navigateur).
 // Ce navigateur retient ses propres générations pour les reprendre après un rechargement de page.
 function queued(r) {
@@ -550,7 +748,7 @@ function watchGen(kind, id) {
   watchJob(id, 'gjob-' + kind, (j) => {
     clearInterval(svc); refreshGenStatus();
     const b = $('grun-' + kind); if (b) b.disabled = false;
-    if (j.state === 'done' && j.result) { showResult(kind, j.result.files); loadOutputs(kind); }
+    if (j.state === 'done' && j.result) { if (j.result.grid) showGrid(kind, j.result.grid); else showResult(kind, j.result.files); loadOutputs(kind); }
   });
 }
 // La carte graphique ne porte qu'un gros modèle : prévenir si le serveur de texte tourne.

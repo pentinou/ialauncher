@@ -377,9 +377,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/gen/run":
             # une seule génération à la fois sur la carte graphique : les suivantes (autre onglet,
             # autre navigateur, autre personne) attendent leur tour dans la file « gen »
-            fn = music.generate if b.get("kind") == "music" else sdcpp.generate
+            fn = music.generate if b.get("kind") == "music" else sdcpp.generate_grid if b.get("grid") else sdcpp.generate
             labels = {"image": "Image", "video": "Vidéo", "music": "Musique"}
-            j = jobs.start("gen", f"{labels.get(b.get('kind'), 'Génération')} — {b.get('prompt', '')[:50]}",
+            what = "Tableau " + "×".join(str(len(a["values"])) for a in b["grid"] if a.get("values")) if b.get("grid") \
+                else labels.get(b.get("kind"), "Génération")
+            j = jobs.start("gen", f"{what} — {b.get('prompt', '')[:50]}",
                            lambda job: fn(job, b), queue="gen", who=self._who())
             return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/gen/stop":
