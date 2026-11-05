@@ -329,6 +329,12 @@ Mesuré sur RTX 3090 (WSL2, Ryzen 3950X), temps de calcul hors premier chargemen
 | Wan 2.2 TI2V 5B, 832×480, 49 images (2 s), 30 étapes | ≈ 3 min 10 s |
 | ACE-Step Turbo + LM 1,7B, chanson d'1 min, 2 variantes | 13 s ; ≈ 1 min 50 au premier lancement (chargement du LM) |
 
+**LoRA vraiment appliqués.** sd-server essaie chaque LoRA sur l'encodeur de texte, le réseau
+de diffusion et le VAE, et note combien de ses tenseurs il a reconnus. Le launcher relève ces
+lignes : sous l'image, « LoRA nom ×poids ✓ » s'il a été appliqué, « aucun effet » si aucun
+tenseur ne correspond au modèle (LoRA d'une autre famille) ; champ `loras_applied` du `.json`.
+« ✕ retirer les LoRA du prompt » (niveau 3) revient au checkpoint seul.
+
 Tout ce qui est généré est rangé dans `outputs/image`, `outputs/video` et
 `outputs/music`, avec un `.json` des réglages à côté : la galerie permet de revoir un
 résultat et de reprendre ses réglages (graine comprise). Le bouton « ☆ garder avec ses
@@ -339,8 +345,9 @@ dans leurs métadonnées (bloc `parameters` écrit par stable-diffusion.cpp, au 
 
 **Tableau de variations X/Y/Z** (onglet Image, comme le « X/Y/Z plot » de la WebUI) : une
 image par combinaison de valeurs, X en colonnes, Y en lignes, Z = un tableau par valeur.
-Axes possibles : graine, étapes, CFG, sampler, planning, checkpoint, chercher / remplacer
-dans le prompt (et le négatif), largeur, hauteur, clip skip, force img2img. Écritures :
+Axes possibles : graine, étapes, CFG, sampler, planning, checkpoint, poids d'un LoRA du
+prompt (`0, 5` ou `-2-3 [6]`), chercher / remplacer dans le prompt (et le négatif),
+largeur, hauteur, clip skip, force img2img. Écritures :
 `1, 3, 5` ; `1-5` (de 1 en 1) ; `1-5 (+2)` → 1, 3, 5 ; `10-4 (-3)` → 10, 7, 4 ;
 `1-10 [4]` → 1, 4, 7, 10 ; textes séparés par des virgules, entre guillemets s'ils en
 contiennent. Pour « chercher / remplacer », la 1re valeur est le texte du prompt remplacé
@@ -348,8 +355,9 @@ tour à tour par chacune (`:0.8>, :0.4>` fait varier le poids d'un LoRA). Une gr
 aléatoire est tirée une fois pour tout le tableau ; les cases sont générées checkpoint
 par checkpoint (un seul chargement de chaque) ; une case ratée n'arrête pas les autres.
 « Chercher / remplacer » a deux champs : le texte cherché dans le prompt (ou le négatif), puis
-ses remplaçants, une image par valeur (chercher `:-2>`, remplacer par `:-2>, :3>` pour le poids
-d'un LoRA) ; 1er champ vide = écriture de la WebUI. La galerie montre la **grille titrée**
+ses remplaçants, une image par valeur ; 1er champ vide = écriture de la WebUI. Si une balise
+`<lora:…>` disparaîtrait d'une image (piège classique : chercher la balise entière et la
+remplacer par un nombre), le formulaire le signale. La galerie montre la **grille titrée**
 (un PNG, tous les tableaux Z l'un sous l'autre, cases réduites pour rester sous 16 Mpx),
 avec « voir les images séparées » ; les images elles-mêmes sont rangées dans
 `outputs/image/tableaux/<date>/` (champ `xyz` de leur `.json`), et supprimer la grille les

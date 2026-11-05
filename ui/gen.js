@@ -214,6 +214,7 @@ function renderModels(kind) {
   h += '</div>';
   // niveau 3 : LoRA
   h += `<div class="tpanel"><div class="thead"><span class="tstep">niveau 3</span><b>LoRA</b><span class="muted small" id="glorah-${kind}"></span>
+    <button class="link small hidden" id="gloraclr-${kind}" onclick="clearLoras('${kind}')">✕ retirer les LoRA du prompt</button>
     ${civFam ? `<button class="link small tact" onclick="civOpen('${kind}','LORA','${civFam}')">🔎 chercher des LoRA ${esc(fam.label)} sur Civitai</button>` : ''}</div>
     <div class="muted small">Un LoRA ajoute un style, un personnage ou un concept. Il est entraîné sur un modèle de base : il marche avec les checkpoints de sa famille, d’abord ceux de la même base. Cliquez pour l’ajouter au prompt, recliquez pour l’en retirer.</div>
     <div id="glora-${kind}"></div></div>`;
@@ -339,7 +340,7 @@ function renderForm(kind) {
 }
 function setGen(kind, k, v, quiet) {
   G.form[kind][k] = v;
-  if (k === 'prompt') markLoras(kind);
+  if (k === 'prompt' || k === 'negative') { markLoras(kind); if (kind === 'image') updateXyz(kind); }
   LS.set('form.' + kind, {prompt: G.form[kind].prompt, negative: G.form[kind].negative, offload: G.form[kind].offload, vae_tiling: G.form[kind].vae_tiling, batch: G.form[kind].batch, xyz: G.form[kind].xyz});
   if (!quiet) renderForm(kind);
 }
@@ -405,6 +406,18 @@ function markLoras(kind) {
   document.querySelectorAll(`#glora-${kind} [data-lora]`).forEach(c => { const on = prompt.includes('<lora:' + c.dataset.lora + ':'); c.classList.toggle('sel', on); n += on; });
   const m = G.sel[kind], hd = $('glorah-' + kind);
   if (hd) hd.textContent = m ? `pour ${m.name}${n ? ` — ${n} dans le prompt` : ''}` : '';
+  const clr = $('gloraclr-' + kind); if (clr) clr.classList.toggle('hidden', !/<lora:/.test(prompt));
+}
+// virgules laissées par une balise retirée : « a,, b » → « a, b »
+const tidyPrompt = (t) => t.replace(/\s*,(\s*,)+/g, ',').replace(/^[\s,]+|[\s,]+$/g, '').replace(/ {2,}/g, ' ');
+// sans LoRA : retire leurs balises (et les mots déclencheurs ajoutés avec elles)
+function clearLoras(kind) {
+  const m = G.sel[kind], f = G.form[kind]; if (!m) return;
+  for (const x of loraList(kind, m)) if (f.prompt.includes('<lora:' + x.name + ':')) toggleLora(kind, x.i);
+  f.prompt = tidyPrompt(f.prompt.replace(/<lora:[^>]*>/g, ''));
+  const ta = $('gp-' + kind); if (ta) ta.value = f.prompt;
+  setGen(kind, 'prompt', f.prompt, true);
+  toast('LoRA retirés du prompt');
 }
 function toggleLora(kind, i) {
   const m = G.sel[kind], x = loraList(kind, m)[i], f = G.form[kind];
@@ -412,7 +425,7 @@ function toggleLora(kind, i) {
   const tag = new RegExp('\\s*<lora:' + rx(x.name) + ':[^>]*>', 'g');
   // retirer aussi les mots déclencheurs ajoutés avec lui (juste avant la balise)
   const withWords = x.words.length ? new RegExp('(^|,\\s*)' + x.words.map(rx).join(',\\s*') + '\\s*<lora:' + rx(x.name) + ':[^>]*>') : null;
-  if (tag.test(f.prompt)) f.prompt = (withWords && withWords.test(f.prompt) ? f.prompt.replace(withWords, '') : f.prompt.replace(tag, '')).trim();
+  if (tag.test(f.prompt)) f.prompt = tidyPrompt(withWords && withWords.test(f.prompt) ? f.prompt.replace(withWords, '') : f.prompt.replace(tag, ''));
   else f.prompt = (f.prompt.trim() + (x.words.length ? ', ' + x.words.join(', ') : '') + ` <lora:${x.name}:0.8>`).replace(/^, /, '').trim();
   const ta = $('gp-' + kind); if (ta) ta.value = f.prompt;
   setGen(kind, 'prompt', f.prompt, true);
@@ -586,11 +599,13 @@ async function runGen(kind) {
 // ------------------------------------------------------------------ tableau X/Y/Z
 // (le « X/Y/Z plot » de la WebUI : mêmes écritures, « 1-5 (+2) », « 1-10 [4] »…)
 const XYZ = [['', '—'], ['seed', 'Graine'], ['steps', 'Étapes'], ['cfg', 'CFG'], ['sampler', 'Sampler'], ['scheduler', 'Planning'],
-  ['checkpoint', 'Checkpoint'], ['prompt_sr', 'Prompt : chercher / remplacer'], ['width', 'Largeur'], ['height', 'Hauteur'],
+  ['checkpoint', 'Checkpoint'], ['lora_weight', 'Poids d’un LoRA'], ['prompt_sr', 'Prompt : chercher / remplacer'], ['width', 'Largeur'], ['height', 'Hauteur'],
   ['clip_skip', 'Clip skip'], ['strength', 'Force (img2img)']];
-const XYZ_INT = ['seed', 'steps', 'width', 'height', 'clip_skip'], XYZ_NUM = XYZ_INT.concat(['cfg', 'strength']);
+const XYZ_INT = ['seed', 'steps', 'width', 'height', 'clip_skip'], XYZ_NUM = XYZ_INT.concat(['cfg', 'strength', 'lora_weight']);
 const XYZ_HINT = {seed: '1, 2, 3', steps: '10-40 (+10)', cfg: '1-9 (+2)', sampler: 'euler, dpm++2m', scheduler: 'karras, simple',
-  checkpoint: '＋ ajouter… à droite', prompt_sr: ':-2>, :3>', width: '768, 1024', height: '768, 1024', clip_skip: '1, 2', strength: '0.3-0.9 [4]'};
+  checkpoint: '＋ ajouter… à droite', prompt_sr: ':-2>, :3>', width: '768, 1024', height: '768, 1024', clip_skip: '1, 2', strength: '0.3-0.9 [4]', lora_weight: '0, 5 ou -2-3 [6]'};
+// noms des LoRA présents dans le prompt et le négatif (balises <lora:nom:poids>)
+const promptLoras = (kind) => [...new Set([...((G.form[kind].prompt || '') + ' ' + (G.form[kind].negative || '')).matchAll(/<lora:([^:>]+)(?::[-\d.]*)?>/g)].map(m => m[1]))];
 function xyzState(kind) {
   const f = G.form[kind];
   if (!Array.isArray(f.xyz) || f.xyz.length !== 3) f.xyz = [{p: '', t: '', s: ''}, {p: '', t: '', s: ''}, {p: '', t: '', s: ''}];
@@ -606,6 +621,7 @@ function xyzHtml(kind) {
       const a = ax[i], e = en(a.p);
       return `<div class="grow"><label>${lab}</label><div>
         <select onchange="setAxis('${kind}',${i},'p',this.value)">${XYZ.map(([v, l]) => `<option value="${v}" ${v === a.p ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        ${a.p === 'lora_weight' ? (promptLoras(kind).length ? `<select onchange="setAxis('${kind}',${i},'s',this.value)" style="max-width:260px">${promptLoras(kind).map(n => `<option ${n === a.s ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select><span class="small muted">poids</span>` : '<span class="small warn">ajoutez d’abord un LoRA au prompt (niveau 3)</span>') : ''}
         ${a.p === 'prompt_sr' ? `<span class="small muted">chercher</span><input value="${esc(a.s || '')}" placeholder="texte du prompt, ex. :-2>" style="flex:1;min-width:120px" oninput="setAxis('${kind}',${i},'s',this.value)"><span class="small muted">remplacer par</span>` : ''}
         ${a.p ? `<input id="xyzt-${kind}-${i}" value="${esc(a.t)}" placeholder="${esc(XYZ_HINT[a.p])}" style="flex:1;min-width:150px" oninput="setAxis('${kind}',${i},'t',this.value)">` : ''}
         ${e ? `<select onchange="addAxisValue('${kind}',${i},this.value);this.value=''"><option value="">＋ ajouter…</option>${e.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : ''}
@@ -617,7 +633,7 @@ function xyzHtml(kind) {
 function setAxis(kind, i, k, v) {
   const ax = xyzState(kind);
   ax[i][k] = v;
-  if (k === 'p') { ax[i].t = ''; ax[i].s = ''; setGen(kind, 'xyz', ax); return; }
+  if (k === 'p') { ax[i].t = ''; ax[i].s = v === 'lora_weight' ? (promptLoras(kind)[0] || '') : ''; setGen(kind, 'xyz', ax); return; }
   setGen(kind, 'xyz', ax, true);
   updateXyz(kind);
 }
@@ -654,6 +670,7 @@ function parseAxis(kind, p, t, search) {
       else throw new Error(`« ${tok} » : écriture non reconnue`);
     }
     vals = vals.map(v => XYZ_INT.includes(p) ? Math.round(v) : +v.toFixed(4));
+    if (p === 'lora_weight' && !promptLoras(kind).includes(search)) throw new Error(search ? `« ${search} » n’est plus dans le prompt` : 'choisissez le LoRA');
   } else {
     vals = toks;
     const known = p === 'sampler' ? SAMPLERS : p === 'scheduler' ? SCHEDULERS : p === 'checkpoint' ? ckptList(kind).map(m => m.name) : null;
@@ -668,7 +685,7 @@ function parseAxis(kind, p, t, search) {
 // axes renseignés, avec leurs valeurs (les checkpoints passent de leur nom à leur id)
 function xyzAxes(kind) {
   return xyzState(kind).filter(a => a.p).map(a => {
-    const search = a.p === 'prompt_sr' ? (a.s || '') : '';
+    const search = a.p === 'prompt_sr' || a.p === 'lora_weight' ? (a.s || '') : '';
     const shown = parseAxis(kind, a.p, a.t, search);
     const values = a.p === 'checkpoint' ? shown.map(n => ckptList(kind).find(m => m.name === n).id) : shown;
     return search ? {param: a.p, values, shown, search} : {param: a.p, values, shown};
@@ -680,8 +697,14 @@ function updateXyz(kind) {
     const el = $(`xyzp-${kind}-${i}`); if (!el || !a.p) return;
     any = true;
     try {
-      const v = parseAxis(kind, a.p, a.t, a.p === 'prompt_sr' ? a.s : ''); n *= v.length;
+      const v = parseAxis(kind, a.p, a.t, a.p === 'prompt_sr' || a.p === 'lora_weight' ? a.s : ''); n *= v.length;
       el.className = 'small muted'; el.textContent = `→ ${v.length > 12 ? v.slice(0, 12).join(', ') + '…' : v.join(', ')} (${v.length})`;
+      // piège : remplacer toute la balise par un texte sans balise retire le LoRA de l'image
+      const find = a.s || v[0];
+      if (a.p === 'prompt_sr' && find.includes('<lora:') && v.some(x => !x.includes('<lora:'))) {
+        el.className = 'small warn';
+        el.textContent += ' ⚠ la balise LoRA disparaît de ces images : pour faire varier son poids, choisissez « Poids d’un LoRA »';
+      }
     } catch (e) { ok = false; el.className = 'small warn'; el.textContent = a.t.trim() ? e.message : ''; }
   });
   const s = $('xyzn-' + kind), b = $('grun-' + kind);
@@ -813,7 +836,7 @@ function mediaTag(kind, url, big) {
 function resultInfo(kind, f) {
   const m = f.meta || {};
   return `<div class="small muted" style="margin-top:6px">${esc(m.model_name || '')} · graine <span class="mono">${m.seed}</span> · ${m.width ? m.width + '×' + m.height + ' · ' : ''}${m.steps ? m.steps + ' étapes · ' : ''}${m.gen_seconds != null ? m.gen_seconds + ' s de calcul' + (m.seconds > m.gen_seconds + 1 ? ` (+ ${(m.seconds - m.gen_seconds).toFixed(0)} s de chargement)` : '') : ''}</div>
-    <div class="small">${esc(m.prompt || '')}</div>
+    <div class="small">${esc(m.prompt || '')}</div>${loraReport(m)}
     <div class="row-inline">${kind === 'music' ? '' : `<button class="btn small gkeep ${m.kept ? 'primary' : ''}" data-name="${esc(f.name)}" data-kept="${m.kept ? 1 : ''}" onclick="keepOutput('${kind}', this.dataset.name, !this.dataset.kept)" title="afficher son prompt et ses réglages dans la galerie">${m.kept ? '★ gardée' : '☆ garder avec ses réglages'}</button>`}
       ${m.grid ? `<button class="btn small" onclick='showGridOf("${kind}", ${esc(JSON.stringify(f.name))})'>voir les images séparées</button>` : ''}
       <button class="btn small" onclick='reuseMeta("${kind}", ${esc(JSON.stringify(f.name))})'>reprendre ces réglages</button>
@@ -902,6 +925,14 @@ function reuseMeta(kind, name) {
 function showGridOf(kind, name) {
   const f = (G['out_' + kind] || []).find(x => x.name === name);
   if (f && f.meta.grid) showGrid(kind, f.meta.grid);
+}
+// LoRA réellement appliqués par sd-server (tenseurs reconnus) ; 0 = aucun effet
+function loraReport(m) {
+  if (!m.loras_applied || !m.loras_applied.length) return '';
+  return '<div class="small">' + m.loras_applied.map(r => r.applied > 0
+    ? `<span class="badge ok" title="${r.applied} tenseurs du LoRA appliqués au modèle">LoRA ${esc(r.name)} ×${r.multiplier} ✓</span>`
+    : r.applied === 0 ? `<span class="badge warn" title="aucun tenseur de ce LoRA ne correspond au modèle : il est fait pour une autre famille">LoRA ${esc(r.name)} : aucun effet</span>`
+    : `<span class="badge">LoRA ${esc(r.name)} ×${r.multiplier} (non confirmé)</span>`).join(' ') + '</div>';
 }
 function pick(o, keys) { const r = {}; keys.forEach(k => { if (o[k] !== undefined) r[k] = o[k]; }); return r; }
 async function toInput(url) {

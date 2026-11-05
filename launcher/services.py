@@ -31,6 +31,7 @@ class Service:
         self.base_url = ""
         self.cmd = ""
         self.log = []
+        self.nlines = 0             # lignes ajoutées au journal depuis le démarrage (self.log n'en garde que 400)
         self.step = None            # (étape, total, vitesse) de la dernière barre de progression
         self.started = 0
         self.lock = threading.Lock()
@@ -90,7 +91,13 @@ class Service:
                 self.log[-1] = line
                 return
         self.log.append(line)
+        self.nlines += 1
         del self.log[:-400]
+
+    def lines_since(self, mark):
+        """Lignes du journal ajoutées depuis que nlines valait `mark`."""
+        n = self.nlines - mark
+        return self.log[-n:] if n > 0 else []
 
     def _progress(self, text):
         m = None

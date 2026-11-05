@@ -523,6 +523,23 @@ def _loras(prompt, caps):
     return RE_LORA.sub("", prompt).strip(" ,"), out
 
 
+RE_APPLIED = re.compile(r"\((\d+) / (\d+)\) LoRA tensors have been applied, lora_file_path = (.+?) ---")
+
+
+def _lora_report(loras, lines):
+    """Ce que sd-server a réellement appliqué. Il essaie chaque LoRA sur l'encodeur de texte, le
+    réseau de diffusion et le VAE (« (n / m) LoRA tensors have been applied ») : 0 partout =
+    aucun tenseur reconnu, le LoRA n'a eu aucun effet (fait pour une autre famille de modèles)."""
+    best = {}
+    for line in lines:
+        m = RE_APPLIED.search(line)
+        if m:
+            f = Path(m.group(3)).name                        # par nom de fichier : chemin absolu ou relatif
+            best[f] = max(best.get(f, 0), int(m.group(1)))
+    return [{"name": Path(l["path"]).stem, "multiplier": l["multiplier"], "applied": best.get(Path(l["path"]).name)}
+            for l in loras]
+
+
 def _b64(data_url):
     return data_url.split(",", 1)[1] if data_url and "," in data_url else data_url
 
@@ -579,6 +596,7 @@ def generate(job, req):
         endpoint = "/sdcpp/v1/vid_gen"
     job.set(0.02, "envoi à sd-server…")
     SD.step = None
+    mark = SD.nlines
     sub = _post(SD.base_url + endpoint, body)
     jid = sub["id"]
     t_gen = time.time()
@@ -608,6 +626,11 @@ def generate(job, req):
     meta = {k: v for k, v in req.items() if k not in ("init_image", "ref_images", "end_image")}
     meta.update({"seed": seed, "model_name": m["name"], "kind": kind, "seconds": round(time.time() - t0, 1),
                  "gen_seconds": round(time.time() - t_gen, 1)})
+    if loras:
+        meta["loras_applied"] = _lora_report(loras, SD.lines_since(mark))
+        for r in meta["loras_applied"]:
+            if r["applied"] == 0 and r["multiplier"]:
+                job.logline(f"⚠ LoRA {r['name']} : aucun tenseur reconnu par {m['name']}, il n'a eu aucun effet")
     if kind == "image":
         files = [_save("image", base64.b64decode(im["b64_json"]), "png", dict(meta, seed=seed + im.get("index", 0)),
                        req.get("xyz_dir", ""))
@@ -626,8 +649,12 @@ def generate(job, req):
 GRID_PARAMS = {"seed": ("Graine", int), "steps": ("Étapes", int), "cfg": ("CFG", float), "sampler": ("Sampler", str),
                "scheduler": ("Planning", str), "checkpoint": ("Checkpoint", str), "prompt_sr": ("Prompt", str),
                "width": ("Largeur", int), "height": ("Hauteur", int), "clip_skip": ("Clip skip", int),
-               "strength": ("Force", float)}
+               "strength": ("Force", float), "lora_weight": ("Poids LoRA", float)}
 GRID_MAX = 200
+
+
+def _lora_tag(name):
+    return re.compile(r"<lora:" + re.escape(name) + r"(?::[-\d.]*)?>")
 
 
 class _Sub:
@@ -658,6 +685,8 @@ def generate_grid(job, req):
     for a in axes:
         if a["param"] == "prompt_sr" and a.get("search") and a["search"] not in req.get("prompt", "") + req.get("negative", ""):
             raise RuntimeError(f"« {a['search']} » n'est ni dans le prompt ni dans le négatif")
+        if a["param"] == "lora_weight" and not _lora_tag(a.get("search", "")).search(req.get("prompt", "") + req.get("negative", "")):
+            raise RuntimeError(f"pas de balise <lora:{a.get('search', '')}:…> dans le prompt")
         conv = GRID_PARAMS[a["param"]][1]
         a["values"] = [conv(v) for v in a["values"]]
         if a["param"] == "checkpoint":
@@ -694,6 +723,11 @@ def generate_grid(job, req):
             if a["param"] == "checkpoint":
                 r["model"] = v
                 label.append(f"{name} : {(find(v) or {}).get('name', v)}")
+            elif a["param"] == "lora_weight":
+                tag, new = _lora_tag(a["search"]), f"<lora:{a['search']}:{shown}>"
+                r["prompt"] = tag.sub(lambda _: new, r.get("prompt", ""))
+                r["negative"] = tag.sub(lambda _: new, r.get("negative", ""))
+                label.append(f"{name} : {shown}")
             elif a["param"] == "prompt_sr":
                 old = a.get("search") or a["values"][0]
                 r["prompt"] = r.get("prompt", "").replace(old, v)
