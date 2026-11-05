@@ -244,6 +244,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(sdcpp.loras(q.get("model", "")))
         if path == "/api/gen/outputs":
             return self._json(sdcpp.outputs(q.get("kind", "image")))
+        if path == "/api/gen/grids/pending":
+            return self._json(sdcpp.grids_pending(q.get("kind", "image")))
         if path == "/api/gen/outputs/dir":
             return self._json(sdcpp.outputs_info())
         if path == "/api/storage":
@@ -274,6 +276,11 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith("/proxy/"):
                 n = int(self.headers.get("Content-Length") or 0)
                 return self._proxy("POST", u.path[len("/proxy"):] + ("?" + u.query if u.query else ""), self.rfile.read(n))
+            if u.path == "/api/gen/grid/png":           # morceau binaire de la grille d'un tableau X/Y/Z
+                q = {k: v[0] for k, v in parse_qs(u.query).items()}
+                data = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                return self._json(sdcpp.grid_png_part(q.get("kind", "image"), q.get("dir", ""), q.get("token", ""),
+                                                      int(q.get("offset", 0)), data, q.get("last") == "1"))
             body = self._body()
             self._post(u.path, body)
         except Exception as e:  # noqa: BLE001
