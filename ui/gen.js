@@ -194,7 +194,7 @@ function renderModels(kind) {
     </div>`;
   };
   let h = `<div class="tpanel"><div class="thead"><span class="tstep">niveau 1</span><b>Modèle</b><span class="muted small">${nodes.length} familles · ← → pour parcourir</span></div>
-    ${carHtml('car-' + kind, nodes.map(card).join(''), `stepNode('${kind}'`)}</div>`;
+    ${carHtml('car-' + kind, nodes.map(card).join(''), `scrollCar('car-${kind}'`)}</div>`;
   // niveau 2 : checkpoints du modèle choisi
   const items = (cur.entry ? [cur.entry] : []).concat(nodeCkpts(kind, cur));
   const civFam = fam.civitai && fam.civitai.length && G.families[cur.family] ? cur.family : '';
@@ -202,7 +202,7 @@ function renderModels(kind) {
     ${civFam && kind === 'image' ? `<button class="link small tact" onclick="civOpen('${kind}','Checkpoint','${civFam}')">🔎 chercher des checkpoints ${esc(fam.label)} sur Civitai</button>` : ''}</div>`;
   h += items.length ? carHtml('ckcar-' + kind, items.map(m => {
     const official = !m.local, on = sel && sel.id === m.id, pv = official ? null : prevF(kind, m.path), img = ckImg(kind, m), base = baseOf(kind, m);
-    return `<div class="mcard ck ${on ? 'sel' : ''} ${m.installed ? '' : 'dim'}" data-id="${esc(m.id)}" onclick="selectGenModel('${kind}', this.dataset.id)" title="${esc((m.path || '') + (m.blurb ? '\n' + m.blurb : ''))}">
+    return `<div class="mcard ck ${on ? 'sel' : ''} ${m.installed ? '' : 'dim'}" data-id="${esc(m.id)}" onclick="pickCkpt('${kind}', this.dataset.id)" title="${esc((m.path || '') + (m.blurb ? '\n' + m.blurb : ''))}">
       <div class="mimg">${img ? `<img src="${esc(img)}" loading="lazy" alt="">` : `<span>${official ? '★' : '◆'}</span>`}</div>
       <div class="n">${official ? 'Poids d’origine' : esc(m.name)}${m.version ? ` <span class="muted small">${esc(m.version)}</span>` : ''}</div>
       ${pv && pv.found && m.source !== 'Civitai' ? `<div class="small muted">Civitai : <a href="${esc(pv.url)}" target="_blank" onclick="event.stopPropagation()">${esc(pv.name)}${pv.version ? ' · ' + esc(pv.version) : ''} ↗</a></div>` : ''}
@@ -210,7 +210,7 @@ function renderModels(kind) {
       ${m.installed ? '' : `<div><span class="badge warn">${official ? 'à télécharger (carte du modèle)' : 'modèle de base manquant'}</span></div>`}
       ${official ? `<details class="small muted mfoot" onclick="event.stopPropagation()"><summary>fichiers</summary>${m.files.map(f => `<div>${f.present ? '✓' : '·'} ${esc(f.label)} : <span class="mono">${esc(f.path.split('/').pop())}</span> (${fmtGB(f.size)})</div>`).join('')}</details>` : ''}
     </div>`;
-  }).join(''), `stepCkpt('${kind}'`) : '<p class="muted small">Aucun checkpoint de cette famille pour l’instant.</p>';
+  }).join(''), `scrollCar('ckcar-${kind}'`) : '<p class="muted small">Aucun checkpoint de cette famille pour l’instant.</p>';
   h += '</div>';
   // niveau 3 : LoRA
   h += `<div class="tpanel"><div class="thead"><span class="tstep">niveau 3</span><b>LoRA</b><span class="muted small" id="glorah-${kind}"></span>
@@ -230,6 +230,7 @@ function renderModels(kind) {
   renderCivitai(kind);
 }
 function pickNode(kind, key) {
+  if (G.node[kind] === key) return;
   G.node[kind] = key; LS.set('node.' + kind, key);
   const nodes = treeNodes(kind), n = nodes.find(x => x.key === key), sel = G.sel[kind];
   const inNode = sel && nodeOf(kind, sel, nodes) === n;
@@ -239,20 +240,11 @@ function pickNode(kind, key) {
   }
   renderModels(kind);
 }
-// ‹ › des checkpoints : passe au checkpoint téléchargé précédent / suivant du modèle
-function stepCkpt(kind, d) {
-  const n = treeNodes(kind).find(x => x.key === G.node[kind]); if (!n) return;
-  const items = (n.entry ? [n.entry] : []).concat(nodeCkpts(kind, n)).filter(m => m.installed);
-  if (!items.length) return scrollCar('ckcar-' + kind, d);
-  const i = items.findIndex(m => G.sel[kind] && m.id === G.sel[kind].id);
-  selectGenModel(kind, items[(i + d + items.length) % items.length].id);
-  const car = $('ckcar-' + kind); if (car) car.focus({preventScroll: true});
-}
-function stepNode(kind, d) {
-  const nodes = treeNodes(kind), i = nodes.findIndex(n => n.key === G.node[kind]);
-  const n = nodes[(i + d + nodes.length) % nodes.length];
-  pickNode(kind, n.key);
-  const car = $('car-' + kind); if (car) car.focus({preventScroll: true});
+// Les carrousels se parcourent sans rien changer (‹ ›, clavier, défilement) : seul un clic sur
+// un autre checkpoint le sélectionne, et recharge ses LoRA et ses réglages conseillés.
+function pickCkpt(kind, id) {
+  if (G.sel[kind] && G.sel[kind].id === id) return;
+  selectGenModel(kind, id);
 }
 const fmtGB = (b) => (b / 1e9).toFixed(b < 1e9 ? 2 : 1).replace('.', ',') + ' Go';
 async function addGenDir() {
