@@ -532,6 +532,18 @@ async function civDownload(kind, i) {
 }
 
 // ------------------------------------------------------------------ tout décharger
+// Déchargement automatique : délai réglé côté serveur (valable pour tous les navigateurs)
+async function setAutoUnload(v) {
+  try { const r = await api('/api/autounload', {minutes: +v}); toast(r.minutes ? `Modèles déchargés après ${r.minutes} min sans utilisation` : 'Déchargement automatique désactivé'); }
+  catch (e) { toast(e.message); }
+}
+(async () => {
+  try {
+    const r = await api('/api/autounload'), sel = $('autounload');
+    if (![...sel.options].some(o => +o.value === r.minutes)) sel.add(new Option(`auto : ${r.minutes} min`, r.minutes));
+    sel.value = String(r.minutes);
+  } catch (e) { /* ancien serveur */ }
+})();
 async function unloadAll() {
   const busy = Object.keys(JOBS).length;
   if (!confirm('Décharger tous les modèles (texte, image, vidéo, musique) et libérer la VRAM et la RAM ?' +

@@ -279,6 +279,11 @@ confirmation) et l'autre générateur ; lancer le serveur de texte arrête les g
 Le bouton « libérer la carte graphique » décharge le modèle d'image / de musique ; le
 bouton **⏏ tout décharger** de l'en-tête arrête tous les serveurs (texte, image / vidéo,
 musique) et rend la VRAM et la RAM qu'ils occupaient (une génération en cours est annulée).
+Le menu voisin (**auto : 10 min** par défaut ; 30 min, 1 h ou jamais) le fait tout seul quand
+personne ne s'en sert : ni génération, ni discussion, ni requête d'un agent à `llama-server`.
+Un onglet resté ouvert sans rien faire ne compte pas. Le launcher reste ouvert et la demande
+suivante recharge le modèle (quelques secondes à une minute). Un agent qui ne demande rien
+pendant ce délai retrouvera `llama-server` arrêté : relancez-le ou choisissez « jamais ».
 
 **Plusieurs navigateurs en même temps.** Les générations (image, vidéo, musique) passent
 une à la fois, dans l'ordre des demandes : celle demandée pendant qu'une autre tourne
@@ -669,6 +674,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | Méthode | Route | Rôle |
 |---|---|---|
 | GET | `/api/activity` | activité (tâches, requêtes en cours) : le portier n'arrête pas un launcher occupé |
+| GET/POST | `/api/autounload` | délai du déchargement automatique (`{"minutes": 10}` ; 0 = jamais) |
 | GET | `/api/hardware`, `/api/live` | inventaire matériel ; valeurs qui bougent (VRAM, RAM, disque) |
 | GET/POST | `/api/engine`, `/api/engine/install`, `/api/engine/custom`, `/api/engine/select` | état et installation du moteur |
 | GET/POST | `/api/jobs`, `/api/jobs/<id>`, `/api/jobs/<id>/cancel` | tâches longues |
