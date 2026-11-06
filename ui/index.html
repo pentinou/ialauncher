@@ -22,6 +22,10 @@
     <span class="pill" id="pill-engine">moteur…</span>
     <span class="pill" id="pill-server">serveur arrêté</span>
     <button class="pill unload" onclick="unloadAll()" title="arrête llama-server, sd-server et ACE-Step : libère la VRAM et la RAM qu'ils occupent">⏏ tout décharger</button>
+    <select class="pill" id="autounload" onchange="setAutoUnload(this.value)" title="décharge tout seul les modèles quand personne ne s'en sert (générations, discussions, agents) ; un onglet ouvert sans rien faire ne compte pas">
+      <option value="10">auto : 10 min</option><option value="30">auto : 30 min</option>
+      <option value="60">auto : 1 h</option><option value="0">auto : jamais</option>
+    </select>
   </div>
 </header>
 

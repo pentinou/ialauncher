@@ -23,7 +23,10 @@ _HW = {"data": None, "at": 0}
 _LOCK = threading.Lock()
 # Dernière requête reçue (hors /api/activity) : le portier à la demande (ondemand.py)
 # s'en sert pour savoir si quelqu'un utilise encore le launcher avant de l'arrêter.
-_ACTIVITE = {"derniere": time.time()}
+# « usage » : dernière vraie utilisation (action, appel au relais, tâche, réponse de
+# llama-server), sans le suivi périodique d'un onglet ouvert ; sert au déchargement automatique.
+_ACTIVITE = {"derniere": time.time(), "usage": time.time()}
+DECHARGE_DEFAUT = 10   # minutes sans utilisation avant de décharger les modèles ; 0 = jamais
 
 
 def activite():
@@ -38,8 +41,31 @@ def activite():
                 llm = sum(1 for s in json.loads(r.read()) if s.get("is_processing"))
         except Exception:   # /slots désactivé ou serveur occupé à démarrer : on ne bloque pas
             pass
-    return {"derniere_requete": _ACTIVITE["derniere"], "taches": taches, "llm_en_cours": llm,
+    return {"derniere_requete": _ACTIVITE["derniere"], "derniere_utilisation": _ACTIVITE["usage"],
+            "taches": taches, "llm_en_cours": llm,
             "occupe": bool(taches or llm)}
+
+
+def decharge_minutes():
+    return int(engine.load_config().get("unload_idle_min", DECHARGE_DEFAUT))
+
+
+def _decharger_si_inactif():
+    """Arrête llama-server, sd-server et ACE-Step (RAM et VRAM libérées) après
+    « unload_idle_min » minutes sans utilisation ; le launcher, lui, reste ouvert."""
+    while True:
+        time.sleep(30)
+        try:
+            if activite()["occupe"]:
+                _ACTIVITE["usage"] = time.time()
+                continue
+            mins = decharge_minutes()
+            if mins and time.time() - _ACTIVITE["usage"] > mins * 60:
+                arretes = services.claim_gpu("aucun")
+                if arretes:
+                    journal.log(f"déchargement automatique après {mins} min sans utilisation : {', '.join(arretes)}")
+        except Exception:  # noqa: BLE001
+            journal.log(f"erreur du déchargement automatique :\n{traceback.format_exc()}")
 
 
 def hw_inventory(max_age=30):
@@ -164,6 +190,8 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         if u.path != "/api/activity":
             _ACTIVITE["derniere"] = time.time()
+        if u.path.startswith("/proxy/"):
+            _ACTIVITE["usage"] = time.time()
         try:
             self._get(u.path, q)
         except Exception as e:  # noqa: BLE001
@@ -182,6 +210,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(hw_inventory(max_age=0 if q.get("refresh") else 30))
         if path == "/api/activity":
             return self._json(activite())
+        if path == "/api/autounload":
+            return self._json({"minutes": decharge_minutes()})
         if path == "/api/live":
             return self._json(hardware.live())
         if path == "/api/engine":
@@ -271,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- POST
     def do_POST(self):
         u = urlparse(self.path)
-        _ACTIVITE["derniere"] = time.time()
+        _ACTIVITE["derniere"] = _ACTIVITE["usage"] = time.time()
         try:
             if u.path.startswith("/proxy/"):
                 n = int(self.headers.get("Content-Length") or 0)
@@ -358,6 +388,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/server/stop":
             SERVER.stop()
             return self._json(SERVER.status())
+        if path == "/api/autounload":
+            cfg = engine.load_config()
+            cfg["unload_idle_min"] = max(0, int(b.get("minutes", DECHARGE_DEFAUT)))
+            engine.save_config(cfg)
+            return self._json({"minutes": cfg["unload_idle_min"]})
         if path == "/api/unload":
             # tout décharger : les générations en cours sont annulées, sinon elles relanceraient leur serveur
             for j in jobs.running("gen"):
@@ -646,6 +681,7 @@ def serve(port=8765, open_browser=True, host="127.0.0.1"):
     if host != "127.0.0.1":
         print(f"⚠ écoute sur {host} : le launcher n'a PAS d'authentification ; limitez l'accès à ce port "
               "(pare-feu) au seul proxy qui en a une, ex. le SSO YunoHost", flush=True)
+    threading.Thread(target=_decharger_si_inactif, daemon=True).start()
     if open_browser:
         threading.Timer(0.8, lambda: _open_browser(url)).start()
     import signal

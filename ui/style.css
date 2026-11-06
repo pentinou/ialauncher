@@ -16,6 +16,7 @@ h2{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute
 .brand{font-size:16px;letter-spacing:.04em}
 .pill{display:inline-block;padding:3px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);margin-left:6px}
 .pill.unload{background:none;cursor:pointer;font:inherit;font-size:12px}.pill.unload:hover{border-color:var(--warn);color:var(--warn)}
+select.pill{background:var(--bg,transparent);font:inherit;font-size:12px;cursor:pointer}
 .pill.ok{border-color:var(--ok);color:var(--ok)}.pill.warn{border-color:var(--warn);color:var(--warn)}.pill.err{border-color:var(--err);color:var(--err)}.pill.busy{border-color:var(--acc);color:var(--acc)}
 .layout{display:grid;grid-template-columns:300px 1fr;gap:0;min-height:calc(100vh - 50px)}
 .layout>*{min-width:0}   /* sinon un carrousel élargit la colonne au lieu de défiler (téléphone) */
