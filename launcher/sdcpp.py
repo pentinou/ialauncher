@@ -895,6 +895,29 @@ def set_outputs_dir(path):
     return outputs_info()
 
 
+def _open_on_windows_desktop(win_path):
+    """Ouvre un dossier sur le bureau de la session Windows ouverte, depuis WSL. Démarré par la
+    tâche du portier, WSL vit en session 0, sans bureau : explorer.exe n'y affiche rien, et son
+    code de retour (1, même quand il réussit) ne le dit pas. Une tâche « interactive » temporaire
+    s'exécute, elle, dans la session de l'utilisateur."""
+    def run(*cmd):
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+
+    if shutil.which("quser.exe") and run("quser.exe").returncode != 0:
+        raise RuntimeError("aucune session Windows ouverte sur la machine du launcher")
+    task = "IA Launcher - ouvrir un dossier"
+    r = run("schtasks.exe", "/create", "/f", "/tn", task, "/sc", "once", "/st", "23:59", "/it",
+            "/tr", f'explorer.exe "{win_path}"')
+    if r.returncode != 0:
+        raise RuntimeError("ouverture du dossier impossible : " + (r.stderr or r.stdout).strip())
+    try:
+        r = run("schtasks.exe", "/run", "/tn", task)
+        if r.returncode != 0:
+            raise RuntimeError("ouverture du dossier impossible : " + (r.stderr or r.stdout).strip())
+    finally:
+        run("schtasks.exe", "/delete", "/f", "/tn", task)
+
+
 def open_outputs(kind):
     """Ouvre le dossier dans l'explorateur de fichiers de la machine qui fait tourner le launcher."""
     if kind not in ("image", "video", "music"):
@@ -906,7 +929,7 @@ def open_outputs(kind):
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(d)])
     elif shutil.which("explorer.exe") and _wslpath("-w", d):
-        subprocess.Popen(["explorer.exe", _wslpath("-w", d)])
+        _open_on_windows_desktop(_wslpath("-w", d))
     elif shutil.which("xdg-open"):
         subprocess.Popen(["xdg-open", str(d)])
     else:
