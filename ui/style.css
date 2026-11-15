@@ -198,3 +198,10 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .mcard .mimg{height:150px;margin:-12px -14px 4px;border-radius:13px 13px 0 0;overflow:hidden;background:linear-gradient(135deg,#1f2a44,#2a1f3d);display:flex;align-items:center;justify-content:center}
 .mcard .mimg img{width:100%;height:100%;object-fit:cover;display:block}
 .mcard .mimg span{font-size:34px;font-weight:700;color:rgba(255,255,255,.18);text-transform:uppercase}
+/* onglet YouTube */
+.yt-point{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 0;background:var(--bg)}
+.yt-point summary{cursor:pointer;font-size:16px;font-weight:600;line-height:1.4}
+.yt-point p{margin:10px 0 2px;line-height:1.5}
+.yt-hist{padding:8px 10px;border-radius:8px;cursor:pointer}.yt-hist:hover{background:var(--card2)}
+#yt-url{flex:1;min-width:240px}
+.mode{white-space:nowrap}.top{flex-wrap:wrap;gap:8px}

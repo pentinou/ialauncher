@@ -20,10 +20,11 @@ G.nsfw = LS.get('nsfw', false);   // case « Contenu adulte » : vignettes et re
 function showMode(m) {
   G.mode = m;
   document.querySelectorAll('.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  ['text', 'image', 'video', 'music', 'storage', 'updates', 'logs'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
+  ['text', 'image', 'video', 'music', 'youtube', 'storage', 'updates', 'logs'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
   LS.set('mode', m);
   if (m === 'image' || m === 'video') loadVisual(m);
   if (m === 'music') loadMusic();
+  if (m === 'youtube') loadYoutube();
   if (m === 'storage') loadStorage();
   if (m === 'updates') loadUpdates();
   if (m === 'logs') loadLogs();

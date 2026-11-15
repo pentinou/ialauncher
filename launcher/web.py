@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
 from . import (hardware, engine, jobs, journal, models, catalog, estimate, recommend, presets, paths, agents,
-               sdcpp, music, gen_catalog, services, storage, civitai, updates)
+               sdcpp, music, gen_catalog, services, storage, civitai, updates, youtube)
 from .server import SERVER
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -210,6 +210,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(hw_inventory(max_age=0 if q.get("refresh") else 30))
         if path == "/api/activity":
             return self._json(activite())
+        if path == "/api/youtube":
+            return self._json({"tools": youtube.status(), "history": youtube.history(),
+                               "llm": SERVER.status()["model"] if SERVER.state == "ready" else None})
+        if path == "/api/youtube/item":
+            rec = youtube.load(q.get("id", ""))
+            return self._json(youtube.public(rec) if rec else {"error": "vidéo inconnue"}, 200 if rec else 404)
         if path == "/api/autounload":
             return self._json({"minutes": decharge_minutes()})
         if path == "/api/live":
@@ -456,6 +462,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "ce fichier est déjà en cours de téléchargement"}, 409)
             j = jobs.start("gen-download", label, lambda job: civitai.download_file(job, b["type"], b))
             return self._json({"job": j.to_dict()})
+        if path == "/api/youtube/install":
+            if jobs.running("youtube-install"):
+                return self._json({"error": "une installation est déjà en cours"}, 409)
+            j = jobs.start("youtube-install", "Installation de yt-dlp et Deno", youtube.install)
+            return self._json({"job": j.to_dict()})
+        if path == "/api/youtube/run":
+            vid = youtube.video_id(b.get("url", ""))
+            if not vid:
+                return self._json({"error": "ce n'est pas une adresse de vidéo YouTube"}, 400)
+            rec = youtube.load(vid)
+            if rec and not b.get("again"):
+                return self._json({"item": youtube.public(rec)})
+            if SERVER.state != "ready":
+                return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
+            j = jobs.start("youtube", f"Résumé — {vid}", lambda job: youtube.run(job, b["url"], SERVER.base_url()),
+                           who=self._who())
+            return self._json({"job": j.to_dict()})
+        if path == "/api/youtube/ask":
+            if SERVER.state != "ready":
+                return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
+            return self._json(youtube.ask_saved(b["id"], b["question"], SERVER.base_url()))
         if path == "/api/music/install":
             if jobs.running("music-install"):
                 return self._json({"error": "une installation est déjà en cours"}, 409)

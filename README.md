@@ -11,6 +11,9 @@ launcher installe les moteurs ([stable-diffusion.cpp](https://github.com/leejet/
 et [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)), télécharge les modèles, et
 tout se règle dans son interface — pas de ComfyUI, pas de nœuds.
 
+L'onglet **YouTube** résume une vidéo avec le modèle de texte lancé : l'essentiel en une
+phrase (un point par sujet), l'explication en un clic, et vos propres questions sur la vidéo.
+
 Python 3.10+ **sans aucune dépendance** (bibliothèque standard uniquement). Interface web
 vanilla (HTML/JS/CSS), servie sur `127.0.0.1` ; accessible depuis d'autres appareils à
 travers un portail avec connexion (YunoHost, nginx…), voir [Installation](#installation-et-démarrage).
@@ -35,6 +38,7 @@ générale ; le code est indépendant.
 - [Ce que fait chaque étape](#ce-que-fait-chaque-étape)
 - [Utiliser le modèle depuis d'autres applications](#utiliser-le-modèle-depuis-dautres-applications)
 - [Image, vidéo, musique](#image-vidéo-musique)
+- [Résumé de vidéos YouTube](#résumé-de-vidéos-youtube)
 - [Espace disque](#espace-disque)
 - [Mises à jour des moteurs et des modèles](#mises-à-jour-des-moteurs-et-des-modèles)
 - [Configurations enregistrées (presets)](#configurations-enregistrées-presets)
@@ -445,6 +449,46 @@ supprime aussi. La grille est dessinée par le navigateur puis envoyée par morc
 ouvert à la fin du tableau, le prochain qui ouvre la galerie s'en charge.
 200 images au plus, 50 valeurs par axe.
 
+## Résumé de vidéos YouTube
+
+Beaucoup de vidéos durent 15 minutes pour une information qui tient en une ligne. L'onglet
+**▶ YouTube** prend l'adresse d'une vidéo et donne :
+
+- **l'essentiel en une phrase** : la réponse, la conclusion ou le conseil, pas le sujet.
+  Une vidéo qui traite de plusieurs sujets indépendants (revue d'actualité…) donne un point
+  par sujet, 5 au plus ;
+- **l'explication** (un paragraphe, chiffres et noms compris) en cliquant sur la phrase ;
+- **une fenêtre de questions** : le modèle répond d'après ce qui est dit dans la vidéo, en
+  citant le moment (mm:ss), et dit quand la vidéo n'aborde pas la question.
+
+![Onglet YouTube : résumé déplié et une question](docs/youtube.png)
+
+**Comment.** [yt-dlp](https://github.com/yt-dlp/yt-dlp) lit les sous-titres de la vidéo :
+ceux de l'auteur, sinon ceux que YouTube génère dans la langue d'origine — jamais une
+traduction automatique, ni la piste d'un doublage automatique. YouTube impose un moteur
+JavaScript pour ses vérifications : [Deno](https://deno.com). Les deux (~100 Mo) s'installent
+d'un clic dans `engines/youtube/`. Le texte part ensuite au `llama-server` lancé dans l'onglet
+Texte, qui répond dans un format JSON imposé (grammaire), sans raisonnement (« thinking »).
+Le résumé est toujours en français, quelle que soit la langue de la vidéo.
+
+**Quel modèle.** Il doit être lancé avant (l'onglet ne prend pas la carte graphique de
+lui-même). Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
+contexte de **16k** couvre une vidéo de 30 min (≈ 9 000 jetons). Mesuré avec Qwen 3.8 27B
+(Q4_K_S, RTX 3090) : 10 à 30 s par résumé, plus ~10 s pour lire les sous-titres. Il corrige
+de lui-même les sous-titres automatiques abîmés (« RTX 570 » pour 5070). Les questions
+suivantes sur la même vidéo répondent en 2 à 5 s : `llama-server` garde la transcription en
+cache et ne relit que la question.
+
+**Historique.** Chaque vidéo est enregistrée dans `youtube/<id>.json` (métadonnées,
+transcription, résumé, questions) : la rouvrir est instantané. « refaire le résumé » relit
+les sous-titres et redemande au modèle lancé.
+
+**yt-dlp à jour.** YouTube casse régulièrement les anciennes versions (erreurs 403). Pour
+retélécharger la dernière version de yt-dlp et de Deno :
+`curl -X POST http://127.0.0.1:8765/api/youtube/install -H 'Content-Type: application/json' -d '{}'`.
+
+Choix et pistes écartées : [docs/youtube.md](docs/youtube.md).
+
 ## Espace disque
 
 L'onglet **Stockage** mesure tout ce qu'occupe le launcher, groupé : modèles de texte,
@@ -502,12 +546,14 @@ peut les copier d'une machine à l'autre (les chemins de modèles doivent existe
 la variable `IALAUNCHER_HOME` :
 
 ```
-engines/   binaires llama.cpp et stable-diffusion.cpp (un sous-dossier par version/variante, fichier VERSION)
+engines/   binaires llama.cpp et stable-diffusion.cpp (un sous-dossier par version/variante, fichier VERSION) ;
+           youtube/ : yt-dlp et Deno
 models/    .gguf téléchargés par le launcher (+ mmproj, brouillons MTP)
 diffusion/ modèles d'image et de vidéo (un sous-dossier par dépôt Hugging Face),
            checkpoints/ et loras/ (Civitai, avec un .json de métadonnées ; loras/webui-*/ = liens vers la WebUI)
 apps/      ACE-Step-1.5 (code, environnement Python .venv, checkpoints/)
 outputs/   image/, video/, music/ : les générations et leurs réglages (.json)
+youtube/   un .json par vidéo résumée : métadonnées, transcription, résumé, questions
 presets/   configurations enregistrées (JSON)
 agents/    scripts générés pour Claude Code / Codex / OpenCode
 cache/     en-têtes GGUF déjà lus, catalogue Hugging Face, sources llama.cpp
@@ -621,6 +667,9 @@ Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
   pas pris en charge (utilisez le catalogue).
 - Musique : l'API d'ACE-Step n'a pas d'annulation ; une génération annulée se termine
   en arrière-plan.
+- YouTube : une vidéo sans sous-titres (ni de l'auteur, ni générés par YouTube) n'est pas
+  encore résumable (pas de transcription par Whisper) ; les passages sponsorisés ne sont pas
+  retirés avant le résumé.
 - Interface et explications en français uniquement.
 
 ## Structure du code
@@ -653,11 +702,13 @@ launcher/
   civitai.py           recherche sur Civitai (modèles de base, checkpoints, LoRA) et téléchargement
   storage.py           espace disque : mesure et suppression
   updates.py           mises à jour : moteurs, nouvelles versions des modèles, fiches, catalogue utilisateur
+  youtube.py           résumé de vidéos : yt-dlp + Deno, sous-titres, résumé et questions par llama-server, historique
 ui/
   index.html, app.js, style.css   interface, sans framework ni build
   gen.js               onglets Image, Vidéo, Musique
   updates.js           onglet Mises à jour
   logs.js              onglet Journaux (suivi en direct)
+  youtube.js           onglet YouTube
 linux/
   installer-service.sh   démarrage automatique (service systemd du portier)
   installer-logs.sh, logrotate-ialauncher   journaux dans /var/log/ialauncher, roulement par logrotate
@@ -695,6 +746,8 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET/POST | `/api/civitai/search` (`type` : Checkpoint, LORA, Base), `/api/civitai/base-prefill?model=&version=`, `/api/civitai/token`, `/api/civitai/download` | Civitai (`base-prefill` : fiche d'un modèle de base d'après la doc de sd.cpp) |
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
 | POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
+| GET | `/api/youtube`, `/api/youtube/item?id=` | YouTube : outils installés, modèle lancé, historique ; une vidéo résumée |
+| POST | `/api/youtube/install`, `/api/youtube/run`, `/api/youtube/ask` | installer yt-dlp et Deno ; résumer (`url`, `again` pour refaire ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation
