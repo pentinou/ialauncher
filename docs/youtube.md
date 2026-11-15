@@ -19,7 +19,8 @@ adresse ──► 1. métadonnées (yt-dlp -J)   titre, durée, chapitres, langu
                         │
                     4. enregistré dans youtube/<id>.json ; questions sur la même transcription
                        (transcription gardée dans <id>.part entre 2 et 3 : un échec du résumé
-                       ne fait pas refaire Whisper)
+                       ne fait pas refaire Whisper ; « refaire le résumé » repart de la
+                       transcription enregistrée)
 ```
 
 ## Récupération : yt-dlp + Deno
@@ -57,11 +58,19 @@ l'onglet lui envoie la transcription (`/v1/chat/completions`) avec :
 - la transcription en texte suivi, avec un titre `##` à chaque chapitre YouTube (indice pour
   découper les sujets) et un repère `[mm:ss]` toutes les 30 s (pour citer un moment).
 
+**Un point ou plusieurs** : le schéma commence par un `genre`, « un seul thème » (exactement
+1 point) ou « nouvelles sans lien » (une liste `sujets`, puis 2 à 5 points), grâce à un `anyOf`
+que la grammaire de llama-server impose. Le modèle décide ainsi avant de rédiger. Mesuré sur
+12 vidéos : laissé libre, il regroupait les nouvelles d'une revue d'actualité de 1 h en
+2 points (un essai sur trois) ; avec une liste de sujets seule, il découpait au contraire un
+test ou un classement en 5 aspects. Avec le genre : 5 points aux trois essais sur la revue,
+1 point pour chaque vidéo à thème unique.
+
 Consignes clés du prompt : la phrase donne **la réponse, pas le sujet** (25 mots au plus) ;
 le détail en puces courtes plutôt qu'en paragraphe (demande de l'utilisateur), avec « → » ou des
 sous-puces pour un raisonnement en plusieurs étapes ;
-un seul point par défaut, plusieurs seulement pour des sujets indépendants, sans en mélanger
-deux ; ignorer sponsors et appels à s'abonner ; ne rien inventer ; toujours en français.
+dans un débat ou une interview, attribuer les affirmations à qui les défend ; ignorer sponsors
+et appels à s'abonner ; ne rien inventer ; toujours dans la langue choisie.
 L'exemple du prompt est volontairement hors sujet (pâte à pizza) : un exemple sur le
 matériel informatique déteignait sur les résumés de vidéos de matériel.
 

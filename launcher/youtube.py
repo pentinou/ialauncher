@@ -268,21 +268,32 @@ SYSTEM = """Tu résumes des vidéos YouTube pour quelqu'un qui ne veut pas perdr
 Tu reçois le titre, la transcription (sous-titres de l'auteur, ou transcription automatique : fautes et noms propres écorchés possibles), avec des repères [mm:ss] et, s'il y en a, les chapitres marqués « ## ».
 
 Règles :
+- « genre », à choisir en premier :
+  « un seul thème » : tout se rattache à une même question, un même produit ou une même affaire. C'est le cas d'un test, d'un comparatif, d'un classement, d'un tutoriel, d'une interview, d'un débat, d'une enquête, même longs et découpés en chapitres. Les aspects d'un thème (prix, performances, histoire, conséquences…) ne sont pas des sujets séparés. → un seul point.
+  « nouvelles sans lien » : la vidéo enchaîne des nouvelles indépendantes, dont chacune pourrait faire une vidéo à part (revue d'actualité, « les infos de la semaine »). → « sujets » : la liste de ces nouvelles en quelques mots chacune, dans l'ordre de la vidéo ; puis exactement un point par sujet, dans le même ordre (les 5 plus importants s'il y en a plus), sans jamais regrouper deux nouvelles dans un point.
 - Chaque point a une « phrase » qui donne l'information elle-même : la réponse, la conclusion, le conseil, le chiffre clé. Jamais le simple sujet. Une seule ligne : 25 mots au plus.
   Mauvais : « La vidéo parle de pâte à pizza. » Bon : « Une pâte laissée 48 h au frigo a plus de goût qu'une pâte levée 2 h à température ambiante. »
 - « detail » : l'explication en liste de puces (un élément du tableau par puce), pas en paragraphe rédigé : 3 à 8 puces courtes, une idée chacune, avec le pourquoi, le comment, les chiffres, noms et exemples importants de la vidéo.
   Un raisonnement en plusieurs étapes s'écrit avec des flèches (« prix de l'énergie en hausse → production plus chère → hausse des prix ») ou en sous-puces : un élément qui commence par « > » est une sous-puce de la puce précédente.
-- Un seul point par défaut. Plusieurs points (5 au maximum) seulement si la vidéo traite de sujets indépendants (revue d'actualité, plusieurs nouvelles sans lien) : un point par sujet, dans l'ordre de la vidéo, sans mélanger deux sujets dans un même point. Un tutoriel, un test ou un comparatif reste un seul point, même s'il a des chapitres.
 - Ignore les sponsors, les demandes d'abonnement, les introductions et les anecdotes sans rapport.
 - Dans un débat, une interview ou une vidéo d'opinion, attribue les affirmations à qui les défend (« selon X… », « X soutient que… ») au lieu de les présenter comme des faits établis.
 - N'invente rien qui ne soit pas dans la transcription. Si la vidéo ne donne pas vraiment de réponse, dis-le dans la phrase.
 - Réponds toujours en {langue}, même si la vidéo est dans une autre langue ; garde les termes techniques usuels."""
 
-SCHEMA = {"type": "object", "required": ["points"], "properties": {"points": {
-    "type": "array", "minItems": 1, "maxItems": 5, "items": {
-        "type": "object", "required": ["phrase", "detail"],
-        "properties": {"phrase": {"type": "string"},
-                       "detail": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}}}}}}}
+# Le genre d'abord, puis (revue d'actualité) la liste des sujets : le modèle décide avant de
+# rédiger. Laissé libre, il regroupait les nouvelles d'une revue de 1 h en 2 points ; avec une
+# liste de sujets seule, il découpait au contraire un test ou un classement en 5 aspects.
+_POINT = {"type": "object", "required": ["phrase", "detail"], "properties": {
+    "phrase": {"type": "string"},
+    "detail": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}}}}
+SCHEMA = {"anyOf": [
+    {"type": "object", "required": ["genre", "points"], "properties": {
+        "genre": {"const": "un seul thème"},
+        "points": {"type": "array", "minItems": 1, "maxItems": 1, "items": _POINT}}},
+    {"type": "object", "required": ["genre", "sujets", "points"], "properties": {
+        "genre": {"const": "nouvelles sans lien"},
+        "sujets": {"type": "array", "minItems": 2, "maxItems": 10, "items": {"type": "string"}},
+        "points": {"type": "array", "minItems": 2, "maxItems": 5, "items": _POINT}}}]}
 
 
 def _prompt(data):
@@ -517,13 +528,15 @@ def run(job, url, llm):
     le lançant au besoin (ou en le relançant avec plus de contexte) : appelé avant Whisper,
     pour que la carte graphique soit libérée (modèle d'image ou de musique arrêté).
     La transcription est gardée à part (<id>.part) jusqu'au résumé : s'il échoue, un nouvel
-    essai ne retranscrit pas la vidéo."""
+    essai ne retranscrit pas la vidéo. « Refaire le résumé » reprend celle déjà enregistrée
+    (et les questions posées)."""
     vid = video_id(url)
     part = _file(vid, "part")
+    old = load(vid) or {}
     try:
         data = json.loads(part.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        data = None
+        data = {"meta": old["meta"], "transcript": old["transcript"]} if old else None
     if data:
         job.label = f"Résumé YouTube — {data['meta']['title']}"
         base_url = llm(job)
@@ -544,7 +557,7 @@ def run(job, url, llm):
     job.set(max(job.progress, 0.6) if data["meta"]["subs"]["kind"] == "whisper" else 0.3, f"résumé par le modèle ({words} mots à lire)…")
     t0 = time.time()
     summary = summarize(job, data, llm, base_url)
-    rec = {**data, "summary": summary, "questions": [], "at": time.time(), "seconds": round(time.time() - t0)}
+    rec = {**data, "summary": summary, "questions": old.get("questions", []), "at": time.time(), "seconds": round(time.time() - t0)}
     _save(rec)
     part.unlink(missing_ok=True)
     return public(rec)
