@@ -270,8 +270,8 @@ Tu reçois le titre, la transcription (sous-titres de l'auteur, ou transcription
 Règles :
 - Chaque point a une « phrase » qui donne l'information elle-même : la réponse, la conclusion, le conseil, le chiffre clé. Jamais le simple sujet. Une seule ligne : 25 mots au plus.
   Mauvais : « La vidéo parle de pâte à pizza. » Bon : « Une pâte laissée 48 h au frigo a plus de goût qu'une pâte levée 2 h à température ambiante. »
-- « detail » : l'explication en liste à puces, pas en paragraphe rédigé. Une idée courte par ligne, chaque ligne commence par « - » ; 3 à 8 puces, avec le pourquoi, le comment, les chiffres, noms et exemples importants de la vidéo.
-  Un raisonnement en plusieurs étapes s'écrit avec des flèches (« prix de l'énergie en hausse → production plus chère → hausse des prix ») ou en sous-puces : deux espaces puis « - ».
+- « detail » : l'explication en liste de puces (un élément du tableau par puce), pas en paragraphe rédigé : 3 à 8 puces courtes, une idée chacune, avec le pourquoi, le comment, les chiffres, noms et exemples importants de la vidéo.
+  Un raisonnement en plusieurs étapes s'écrit avec des flèches (« prix de l'énergie en hausse → production plus chère → hausse des prix ») ou en sous-puces : un élément qui commence par « > » est une sous-puce de la puce précédente.
 - Un seul point par défaut. Plusieurs points (5 au maximum) seulement si la vidéo traite de sujets indépendants (revue d'actualité, plusieurs nouvelles sans lien) : un point par sujet, dans l'ordre de la vidéo, sans mélanger deux sujets dans un même point. Un tutoriel, un test ou un comparatif reste un seul point, même s'il a des chapitres.
 - Ignore les sponsors, les demandes d'abonnement, les introductions et les anecdotes sans rapport.
 - Dans un débat, une interview ou une vidéo d'opinion, attribue les affirmations à qui les défend (« selon X… », « X soutient que… ») au lieu de les présenter comme des faits établis.
@@ -281,7 +281,8 @@ Règles :
 SCHEMA = {"type": "object", "required": ["points"], "properties": {"points": {
     "type": "array", "minItems": 1, "maxItems": 5, "items": {
         "type": "object", "required": ["phrase", "detail"],
-        "properties": {"phrase": {"type": "string"}, "detail": {"type": "string"}}}}}}
+        "properties": {"phrase": {"type": "string"},
+                       "detail": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}}}}}}}
 
 
 def _prompt(data):
@@ -353,7 +354,7 @@ def _tokens(base_url, messages):
 
 
 def summarize(job, data, llm, base_url, timeout=900):
-    """Résumé par le llama-server : {"points": [{"phrase", "detail"}]}."""
+    """Résumé par le llama-server : {"points": [{"phrase", "detail": [puces]}]}."""
     messages = [{"role": "system", "content": _in_lang(SYSTEM)}, {"role": "user", "content": _prompt(data)}]
     # `llm(job, besoin)` relance le modèle avec plus de contexte si la transcription n'y tient pas
     base_url = llm(job, _tokens(base_url, messages) + 4096)   # + la réponse
