@@ -512,9 +512,9 @@ la vidéo (sous-titres de l'auteur, sinon Whisper) et redemande au modèle lanc�
 aussi le moyen de refaire une vidéo résumée avant cette règle à partir des sous-titres
 automatiques.
 
-**yt-dlp à jour.** YouTube casse régulièrement les anciennes versions (erreurs 403). Pour
-retélécharger la dernière version de yt-dlp et de Deno :
-`curl -X POST http://127.0.0.1:8765/api/youtube/install -H 'Content-Type: application/json' -d '{}'`.
+**yt-dlp à jour.** YouTube casse régulièrement les anciennes versions (erreurs 403) :
+l'onglet **🔄 Mises à jour** compare yt-dlp, Deno et whisper.cpp aux dernières versions
+publiées et les remplace d'un clic.
 
 Choix et pistes écartées : [docs/youtube.md](docs/youtube.md).
 
@@ -532,10 +532,11 @@ vérifie d'abord l'espace libre.
 
 L'onglet **🔄 Mises à jour** réunit :
 
-- **Moteurs** : version installée et dernière version de llama.cpp, stable-diffusion.cpp
-  et ACE-Step, avec un bouton de mise à jour (même installation que dans leurs onglets :
-  compilation locale ou binaire officiel ; l'ancienne version de llama.cpp / sd.cpp reste
-  installée). Un modèle récent demande souvent un moteur récent.
+- **Moteurs** : version installée et dernière version de llama.cpp, stable-diffusion.cpp,
+  ACE-Step et, pour l'onglet YouTube, yt-dlp + Deno et whisper.cpp, avec un bouton de mise à
+  jour (même installation que dans leurs onglets : compilation locale ou binaire officiel ;
+  l'ancienne version de llama.cpp / sd.cpp reste installée, yt-dlp, Deno et whisper.cpp sont
+  remplacés). Un modèle récent demande souvent un moteur récent.
 - **Nouvelles versions des modèles** (bouton « Chercher les nouvelles versions », résultat
   gardé 6 h). Le nom de chaque modèle (catalogue texte, GGUF téléchargés, catalogue
   image et vidéo) est découpé en famille, numéro de version et autres mots

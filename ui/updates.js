@@ -36,7 +36,7 @@ async function loadEngineUpdates() {
     <div id="upd-job-${esc(e.id)}"></div>`).join('');
 }
 async function updateEngine(e) {
-  if (!confirm(`Mettre à jour ${e.name} (${e.installed} → ${e.latest}) ?\n${e.long || ''}. L’ancienne version reste installée.`)) return;
+  if (!confirm(`Mettre à jour ${e.name} (${e.installed} → ${e.latest}) ?\n${e.long || ''}. ${e.replace ? 'L’ancienne version est remplacée.' : 'L’ancienne version reste installée.'}`)) return;
   try { const r = await api(e.action.url, e.action.body); watchJob(r.job.id, 'upd-job-' + e.id, loadEngineUpdates); }
   catch (err) { toast(err.message, 6000); }
 }
