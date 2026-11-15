@@ -10,7 +10,10 @@ vidéo quand le résumé ne suffit pas. Mode d'emploi : [README](../README.md#r�
 ```
 adresse ──► 1. métadonnées (yt-dlp -J)   titre, durée, chapitres, langue, pistes de sous-titres
               │
-              ├─► 2. sous-titres (yt-dlp, format json3)            ~10 s pour les deux appels
+              ├─► 2a. sous-titres (yt-dlp, format json3)            ~10 s pour les deux appels
+              ├─► 2b. sinon, ou sur demande : audio → ffmpeg → whisper-cli    ~1 à 2 min pour 30 min
+              │
+              ├─► SponsorBlock : retrait des passages sponsor / intro / « abonnez-vous »
               │
               └─► 3. résumé par le llama-server lancé ──► JSON imposé {points: [{phrase, detail}]}
                         │
@@ -64,14 +67,35 @@ RTX 3090, ~38 jetons/s) sur 9 vidéos FR et EN de 10 à 39 min : 10 à 30 s par 
 plus petit gagnerait quelques secondes sur un total dominé par la lecture des sous-titres,
 au risque de rater les corrections de sous-titres abîmés.
 
+## SponsorBlock
+
+`GET https://sponsor.ajay.app/api/skipSegments/<4 premiers caractères du SHA-256 de l'id>?categories=[…]`
+renvoie les plages de toutes les vidéos de ce préfixe : l'identifiant exact ne part pas. Catégories
+retirées : sponsor, selfpromo, interaction, intro, outro, preview, filler, music_offtopic. Une ligne
+de transcription est retirée si elle commence dans une plage. Mesuré : 7 vidéos de test sur 9 avaient
+des données (1 à 2 min retirées sur des vidéos de 15 à 35 min). 404 = pas de données ; panne réseau :
+on s'en passe.
+
+## Whisper (vidéos sans sous-titres, ou sous-titres automatiques trop mauvais)
+
+- **whisper.cpp** plutôt que faster-whisper : même famille ggml que llama.cpp et sd.cpp, pas de pile
+  Python ni de CTranslate2. Pas de binaire Linux publié (v1.9.5) : compilé ici comme llama.cpp
+  (`cmake --target whisper-cli`, CUDA si `nvcc` est trouvé, ~5 min sur 32 threads).
+- **`whisper-cli` lancé à chaque vidéo**, pas de serveur à garder en vie : le modèle se charge en
+  une seconde. Progression lue sur `-pp` (« progress = 42% »), sortie `-oj` (segments horodatés).
+- **Modèle `large-v3-turbo` q5_0** (575 Mo, ~1 Go de VRAM) : il cohabite avec un modèle de texte de
+  ~17 Go sur une carte de 24 Go (mesuré : 19,2 Go en tout).
+- **ffmpeg** convertit l'audio YouTube (Opus / AAC, que whisper.cpp ne lit pas) en WAV 16 kHz mono :
+  celui du système, sinon la version statique de BtbN/FFmpeg-Builds (Linux, Windows).
+- **Piste audio d'origine** (`-f "ba[format_note*=original]/ba"`) pour ne pas transcrire un doublage.
+- Mesuré sur RTX 3090, 35 min de Gamers Nexus : 28 s d'audio, 70 s de transcription. Le texte est
+  nettement meilleur que les sous-titres automatiques (« RTX 5070, 4090 performance at $549 » contre
+  « RTX 570 490 performance at 549 »), d'où l'option de l'utiliser même quand des sous-titres existent.
+- Vidéos vraiment sans sous-titres : rares (12 vidéos de petites chaînes testées : toutes avaient des
+  sous-titres automatiques).
+
 ## Pistes pour la suite
 
-- **SponsorBlock** : l'API publique `sponsor.ajay.app/api/skipSegments?videoID=…` donne les
-  plages sponsor / intro / rappel d'abonnement ; retirer ces lignes avant le résumé.
-- **Vidéos sans sous-titres** : transcription par whisper.cpp (`whisper-server`, même famille
-  ggml que llama.cpp et sd.cpp) avec `large-v3-turbo` (~1 Go de VRAM, cohabite avec le LLM),
-  plutôt que faster-whisper (pile Python + CTranslate2 de plus). Il faut ffmpeg pour convertir
-  l'audio en WAV 16 kHz.
 - **Mises à jour** : proposer yt-dlp et Deno dans l'onglet Mises à jour.
 - Vidéos de plus de ~1 h : découper par chapitres puis résumer les résumés (non prévu : le
   besoin visé est la vidéo de 10 à 30 min).

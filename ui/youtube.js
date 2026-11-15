@@ -16,6 +16,7 @@ async function loadYoutube() {
       <div class="row-inline">
         <input id="yt-url" placeholder="https://www.youtube.com/watch?v=…" size="50" onkeydown="if(event.key==='Enter')ytRun()">
         <button class="btn primary" id="yt-go" onclick="ytRun()">Résumer</button>
+        <label class="small hidden" id="yt-w" title="transcrit l’audio au lieu de lire les sous-titres : 1 à 2 min de plus pour 30 min de vidéo, mais bien plus fidèle quand les sous-titres automatiques sont mauvais (accent, jargon, chiffres)"><input type="checkbox" id="yt-whisper" onchange="LS.set('yt.whisper', this.checked)"> toujours transcrire avec Whisper</label>
       </div>
       <div id="yt-llm" class="small"></div>
       <div id="yt-job"></div></section>
@@ -33,27 +34,63 @@ async function ytRefresh() {
   const t = Y.status.tools;
   $('yt-tools').innerHTML = t.ytdlp && t.deno ? '' : `<div class="row-inline"><span>Il faut d'abord <b>yt-dlp</b> (lit YouTube) et <b>Deno</b> (moteur JavaScript que YouTube impose) : ~100 Mo, dans le dossier des moteurs.</span>
       <button class="btn" onclick="ytInstall()">Installer</button></div><div id="yt-install-job"></div>`;
+  if (t.ytdlp && t.deno && !t.whisper) $('yt-tools').innerHTML = `<details class="small"><summary>Vidéos sans sous-titres : installer <b>Whisper</b></summary>
+      <div class="row-inline"><span>whisper.cpp transcrit l'audio quand la vidéo n'a aucun sous-titre. Le launcher le compile ${t.nvcc ? 'pour votre carte NVIDIA (CUDA, ~5 à 10 min)' : 'pour le processeur (pas de CUDA Toolkit trouvé : transcription lente)'}, puis télécharge le modèle large-v3-turbo (575 Mo) et, s'il n'est pas déjà installé, ffmpeg (160 Mo).</span>
+      <button class="btn" onclick="ytInstall('install-whisper')">Installer</button></div></details><div id="yt-install-job"></div>`;
+  $('yt-w').classList.toggle('hidden', !t.whisper);
+  $('yt-whisper').checked = t.whisper && LS.get('yt.whisper', false);
   $('yt-llm').innerHTML = Y.status.llm ? `<span class="muted">Modèle : ${esc(Y.status.llm.name)}</span>`
-    : `<span class="warn-item">Aucun modèle de texte lancé : lancez-en un dans l'onglet <a href="#" onclick="showMode('text');return false">💬 Texte</a> (un modèle de 20 à 30 milliards de paramètres et un contexte de 16k suffisent pour 30 min de vidéo).</span>`;
+    : `<div class="warn-item">Aucun modèle de texte lancé.
+        <select id="yt-model"></select> <button class="btn small" id="yt-launch" onclick="ytLaunch()">Lancer (contexte 16k)</button>
+        <span class="muted">— configuration conseillée par le launcher ; à régler soi-même dans l'onglet <a href="#" onclick="showMode('text');return false">💬 Texte</a>. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, suffit pour 30 min de vidéo.</span></div>`;
+  if (!Y.status.llm) ytModels();
   const h = Y.status.history;
   $('yt-history').innerHTML = h.length ? h.map(x => `<div class="yt-hist" onclick="ytOpen('${esc(x.id)}')">
       <div><b>${esc(x.title)}</b> <span class="muted small">${esc(x.channel || '')} · ${ytDuree(x.duration)}</span></div>
       <div class="small">${esc(x.phrase)}</div></div>`).join('') : '<span class="muted">aucune pour l’instant</span>';
 }
 
-async function ytInstall() {
+async function ytModels() {
+  let d; try { d = await api('/api/models'); } catch (e) { return; }
+  const keep = LS.get('yt.model', '');
+  $('yt-model').innerHTML = d.models.filter(m => !m.draft).map(m =>
+    `<option value="${esc(m.id)}" ${m.id === keep ? 'selected' : ''}>${esc(m.name)} (${fmtG(m.size)})</option>`).join('');
+}
+
+async function ytLaunch() {
+  const id = $('yt-model').value;
+  if (!id) return;
+  LS.set('yt.model', id);
+  $('yt-launch').disabled = true;
   try {
-    const d = await api('/api/youtube/install', {});
+    const cfg = (await api('/api/recommend', {model: {id}})).cfg;
+    for (const k of ['mmproj_size', 'model_present', 'models_dir_bytes']) delete cfg[k];
+    cfg.ctx = 16384;   // ≈ 30 min de vidéo ; moins de cache KV qu'un long contexte
+    await api('/api/server/start', {model: {id}, cfg});
+    $('yt-launch').textContent = 'chargement…';
+    for (;;) {
+      await new Promise(r => setTimeout(r, 2000));
+      const st = await api('/api/server');
+      if (st.state === 'ready') break;
+      if (st.state !== 'starting') throw new Error(st.error || 'le serveur s’est arrêté (voir l’onglet Journaux)');
+    }
+  } catch (e) { toast(e.message, 8000); }
+  ytRefresh();
+}
+
+async function ytInstall(what = 'install') {
+  try {
+    const d = await api('/api/youtube/' + what, {});
     watchJob(d.job.id, 'yt-install-job', ytRefresh);
   } catch (e) { toast(e.message); }
 }
 
-async function ytRun(again) {
+async function ytRun(again, whisper) {
   const url = again ? Y.item.meta.webpage_url : $('yt-url').value.trim();
   if (!url) return;
   $('yt-go').disabled = true;
   try {
-    const d = await api('/api/youtube/run', {url, again: !!again});
+    const d = await api('/api/youtube/run', {url, again: !!again, whisper: !!whisper || (!again && $('yt-whisper').checked)});
     if (d.item) { ytShow(d.item); $('yt-go').disabled = false; return; }
     watchJob(d.job.id, 'yt-job', (j) => {
       $('yt-go').disabled = false;
@@ -71,12 +108,14 @@ function ytShow(item) {
   Y.item = item;
   LS.set('yt.last', item.meta.id);
   const m = item.meta, s = item.summary;
-  const subs = m.subs ? `sous-titres ${m.subs.kind} (${esc(m.subs.lang)})` : '';
+  const subs = !m.subs ? '' : m.subs.kind === 'whisper' ? `transcrit par Whisper (${esc(m.subs.lang)})` : `sous-titres ${m.subs.kind} (${esc(m.subs.lang)})`;
+  const skip = m.skipped ? ` · ${ytDuree(m.skipped.seconds)} de sponsor, intro… retirées (SponsorBlock)` : '';
   const box = $('yt-result');
   box.classList.remove('hidden');
   box.innerHTML = `<h1><a href="${esc(m.webpage_url)}" target="_blank" rel="noopener">${esc(m.title)}</a></h1>
-    <p class="muted small">${esc(m.channel || '')} · ${ytDuree(m.duration)} · ${subs} · ${fmtN(item.words)} mots lus en ${item.seconds} s
-      <button class="link" onclick="ytRun(true)" title="relit les sous-titres et redemande un résumé au modèle lancé">refaire le résumé</button></p>
+    <p class="muted small">${esc(m.channel || '')} · ${ytDuree(m.duration)} · ${subs}${skip} · ${fmtN(item.words)} mots lus en ${item.seconds} s
+      <button class="link" onclick="ytRun(true)" title="relit les sous-titres et redemande un résumé au modèle lancé">refaire le résumé</button>
+      ${Y.status && Y.status.tools.whisper && m.subs && m.subs.kind !== 'whisper' ? ` · <button class="link" onclick="ytRun(true, true)" title="transcrit l’audio au lieu de lire les sous-titres : utile quand les sous-titres automatiques sont mauvais (accent, jargon)">refaire avec Whisper</button>` : ''}</p>
     ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><p>${esc(p.detail)}</p></details>`).join('')}
     <h2>Une question sur la vidéo ?</h2>
     <div id="yt-chat" class="chat">${item.questions.map(ytMsgs).join('') || '<span class="muted small">Le modèle répond d’après ce qui est dit dans la vidéo, en citant le moment (mm:ss). La première question est la plus longue : il relit la transcription.</span>'}</div>

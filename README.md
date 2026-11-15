@@ -471,8 +471,27 @@ d'un clic dans `engines/youtube/`. Le texte part ensuite au `llama-server` lanc�
 Texte, qui répond dans un format JSON imposé (grammaire), sans raisonnement (« thinking »).
 Le résumé est toujours en français, quelle que soit la langue de la vidéo.
 
-**Quel modèle.** Il doit être lancé avant (l'onglet ne prend pas la carte graphique de
-lui-même). Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
+**Sponsors retirés.** Avant le résumé, les passages repérés par la communauté
+[SponsorBlock](https://sponsor.ajay.app) (sponsor, autopromotion, « abonnez-vous », intro,
+générique, digression) sont retirés du texte ; l'onglet affiche la durée retirée. Seuls les
+4 premiers caractères du SHA-256 de l'identifiant de la vidéo sont envoyés à SponsorBlock.
+Sans données pour la vidéo, ou si le service ne répond pas, rien n'est retiré.
+
+**Vidéos sans sous-titres : Whisper.** Un clic installe
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) : compilé ici (CUDA si le CUDA Toolkit
+est présent, sinon pour le processeur ; ~5 à 10 min, il faut cmake et g++), modèle
+`large-v3-turbo` quantifié (575 Mo, ~1 Go de VRAM : il cohabite avec le modèle de texte), et
+ffmpeg s'il n'est pas déjà installé (version autonome, 160 Mo ; sous macOS : `brew install
+ffmpeg`). L'audio de la vidéo est alors transcrit, piste d'origine si la vidéo est doublée.
+Mesuré sur RTX 3090 : 35 min de vidéo transcrites en 70 s (+ ~30 s de téléchargement de
+l'audio). Whisper est aussi **plus fidèle que les sous-titres automatiques** (accent, chiffres,
+noms de produits : « RTX 5070, 4090 performance at $549 » là où YouTube écrit « RTX 570 490
+performance at 549 ») : « refaire avec Whisper » sous un résumé, ou la case « toujours
+transcrire avec Whisper ».
+
+**Quel modèle.** L'onglet ne prend pas la carte graphique de lui-même : sans modèle lancé,
+il propose les modèles présents et un bouton **Lancer (contexte 16k)** (configuration conseillée
+par le launcher), ou bien on le règle dans l'onglet Texte. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
 contexte de **16k** couvre une vidéo de 30 min (≈ 9 000 jetons). Mesuré avec Qwen 3.8 27B
 (Q4_K_S, RTX 3090) : 10 à 30 s par résumé, plus ~10 s pour lire les sous-titres. Il corrige
 de lui-même les sous-titres automatiques abîmés (« RTX 570 » pour 5070). Les questions
@@ -547,7 +566,7 @@ la variable `IALAUNCHER_HOME` :
 
 ```
 engines/   binaires llama.cpp et stable-diffusion.cpp (un sous-dossier par version/variante, fichier VERSION) ;
-           youtube/ : yt-dlp et Deno
+           youtube/ : yt-dlp, Deno, ffmpeg (si absent du système), whisper/ (whisper-cli et son modèle)
 models/    .gguf téléchargés par le launcher (+ mmproj, brouillons MTP)
 diffusion/ modèles d'image et de vidéo (un sous-dossier par dépôt Hugging Face),
            checkpoints/ et loras/ (Civitai, avec un .json de métadonnées ; loras/webui-*/ = liens vers la WebUI)
@@ -667,9 +686,9 @@ Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
   pas pris en charge (utilisez le catalogue).
 - Musique : l'API d'ACE-Step n'a pas d'annulation ; une génération annulée se termine
   en arrière-plan.
-- YouTube : une vidéo sans sous-titres (ni de l'auteur, ni générés par YouTube) n'est pas
-  encore résumable (pas de transcription par Whisper) ; les passages sponsorisés ne sont pas
-  retirés avant le résumé.
+- YouTube : les vidéos de plus de ~1 h dépassent le contexte de 16k conseillé (pas de
+  découpage) ; lancer le modèle avec un contexte plus long. Pas de binaire whisper.cpp prêt
+  à l'emploi : il faut cmake et un compilateur C++.
 - Interface et explications en français uniquement.
 
 ## Structure du code
@@ -702,7 +721,7 @@ launcher/
   civitai.py           recherche sur Civitai (modèles de base, checkpoints, LoRA) et téléchargement
   storage.py           espace disque : mesure et suppression
   updates.py           mises à jour : moteurs, nouvelles versions des modèles, fiches, catalogue utilisateur
-  youtube.py           résumé de vidéos : yt-dlp + Deno, sous-titres, résumé et questions par llama-server, historique
+  youtube.py           résumé de vidéos : yt-dlp + Deno, sous-titres ou Whisper, SponsorBlock, résumé et questions par llama-server, historique
 ui/
   index.html, app.js, style.css   interface, sans framework ni build
   gen.js               onglets Image, Vidéo, Musique
@@ -747,7 +766,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
 | POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
 | GET | `/api/youtube`, `/api/youtube/item?id=` | YouTube : outils installés, modèle lancé, historique ; une vidéo résumée |
-| POST | `/api/youtube/install`, `/api/youtube/run`, `/api/youtube/ask` | installer yt-dlp et Deno ; résumer (`url`, `again` pour refaire ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
+| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/run`, `/api/youtube/ask` | installer yt-dlp et Deno ; installer Whisper ; résumer (`url`, `again` pour refaire, `whisper` pour transcrire l'audio ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation
