@@ -457,7 +457,8 @@ Beaucoup de vidéos durent 15 minutes pour une information qui tient en une lign
 - **l'essentiel en une phrase** : la réponse, la conclusion ou le conseil, pas le sujet.
   Une vidéo qui traite de plusieurs sujets indépendants (revue d'actualité…) donne un point
   par sujet, 5 au plus ;
-- **l'explication** (un paragraphe, chiffres et noms compris) en cliquant sur la phrase ;
+- **l'explication** en puces courtes (chiffres et noms compris ; flèches ou sous-puces pour un
+  raisonnement en plusieurs étapes) en cliquant sur la phrase ;
 - **une fenêtre de questions** : le modèle répond d'après ce qui est dit dans la vidéo, en
   citant le moment (mm:ss), et dit quand la vidéo n'aborde pas la question.
 
@@ -501,13 +502,17 @@ téléchargement de l'audio) ; une vidéo de 15 min est résumée en ~1 min de b
 **Quel modèle.** Le menu **Modèle des résumés** (réglage du launcher, `youtube_model` dans
 `config.json`) désigne le modèle à charger quand aucun modèle de texte ne tourne : l'onglet le
 lance tout seul au premier résumé ou à la première question (configuration conseillée par le
-launcher, contexte 16k, ~30 s). Si un modèle de texte tourne déjà (pour un agent, par exemple),
-c'est lui qui sert. Résumés et questions passent dans **la même file d'attente que les
+launcher, contexte 64k, ~30 s). Si un modèle de texte tourne déjà (pour un agent, par exemple),
+c'est lui qui sert, à condition que la transcription tienne dans son contexte ; sinon il est
+relancé avec le modèle des résumés à 64k. Résumés et questions passent dans **la même file d'attente que les
 générations** d'image, de vidéo et de musique : demandés pendant une génération, ils attendent
 qu'elle finisse (« en attente : N tâches avant celle-ci »), puis libèrent la carte graphique
-pour le modèle de texte. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
-contexte de **16k** couvre une vidéo de 30 min (≈ 9 000 jetons). Mesuré avec Qwen 3.8 27B
-(Q4_K_S, RTX 3090) : 10 à 30 s par résumé. Les questions
+pour le modèle de texte. La barre de progression donne le titre de la vidéo en cours dès qu'il est
+connu. Le contexte de **64k** couvre environ 4 h de parole (2 h 18 de débat = 36 600 jetons).
+Mesuré avec Qwen 3.8 27B (Q4_K_S, RTX 3090) : 64k tiennent en VRAM (18,2 Go, 23,9 Go avec
+Whisper sur une carte de 24 Go) ; 10 à 30 s par résumé d'une vidéo de 30 min, 44 s pour 2 h 18
+(lecture de la transcription à ~1 300 jetons/s). Si le résumé échoue, la transcription reste
+dans `youtube/<id>.part` : un nouvel essai ne la refait pas. Les questions
 suivantes sur la même vidéo répondent en 2 à 5 s : `llama-server` garde la transcription en
 cache et ne relit que la question.
 
@@ -705,8 +710,8 @@ Rien n'est écrit dans `~/.claude`, `~/.codex` ou `~/.config/opencode`.
   pas pris en charge (utilisez le catalogue).
 - Musique : l'API d'ACE-Step n'a pas d'annulation ; une génération annulée se termine
   en arrière-plan.
-- YouTube : les vidéos de plus de ~1 h dépassent le contexte de 16k conseillé (pas de
-  découpage) ; lancer le modèle avec un contexte plus long. Pas de binaire whisper.cpp prêt
+- YouTube : au-delà de ~4 h de parole, la transcription dépasse le contexte de 64k (pas de
+  découpage) : la tâche s'arrête avec un message clair. Pas de binaire whisper.cpp prêt
   à l'emploi : il faut cmake et un compilateur C++.
 - Interface et explications en français uniquement.
 

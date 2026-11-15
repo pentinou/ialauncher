@@ -31,6 +31,13 @@ async function loadYoutube() {
     root.dataset.ready = '1';
   }
   await ytRefresh();
+  // page rechargée pendant un résumé : reprendre son suivi
+  if (!Object.values(JOBS).some(x => x.boxId === 'yt-job')) {
+    try {
+      const j = (await api('/api/jobs')).find(x => x.kind === 'youtube' && x.state === 'running' && x.label.startsWith('Résumé'));
+      if (j) { $('yt-go').disabled = true; ytWatch(j.id); }
+    } catch (e) { /* pas de suivi à reprendre */ }
+  }
   const last = LS.get('yt.last', '');
   if (last && !Y.item) ytOpen(last);
 }
@@ -46,7 +53,7 @@ async function ytRefresh() {
       <button class="btn" onclick="ytInstall('install-whisper')">Installer</button></div><div id="yt-install-job"></div>`;
   const llm = Y.status.llm;
   $('yt-llm').innerHTML = `<div class="row-inline"><span class="muted">Modèle des résumés :</span>
-      <select id="yt-model" onchange="ytSetModel(this.value)" title="chargé tout seul (configuration conseillée, contexte 16k) quand aucun modèle de texte ne tourne ; un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, suffit pour 30 min de vidéo"></select>
+      <select id="yt-model" onchange="ytSetModel(this.value)" title="chargé tout seul (configuration conseillée, contexte 64k ≈ 4 h de vidéo) quand aucun modèle de texte ne tourne, ou relancé ainsi si celui qui tourne a trop peu de contexte pour la vidéo"></select>
       <span class="muted">${!llm ? 'chargé au premier résumé (~30 s)' : llm.id === Y.status.model ? 'lancé' : `c’est <b>${esc(llm.name)}</b>, déjà lancé, qui sera utilisé`}</span></div>`;
   ytModels();
   const h = Y.status.history;
@@ -112,11 +119,31 @@ async function ytRun(again) {
     const d = await api('/api/youtube/run', {url, again: !!again});
     if (d.item) { ytShow(d.item); $('yt-go').disabled = false; return; }
     if (d.ahead) toast(`En file d’attente : ${d.ahead} tâche${d.ahead > 1 ? 's' : ''} avant celle-ci (génération en cours)`, 5000);
-    watchJob(d.job.id, 'yt-job', (j) => {
-      $('yt-go').disabled = false;
-      if (j.state === 'done') { $('yt-job').innerHTML = ''; ytShow(j.result); ytRefresh(); }
-    });
+    ytWatch(d.job.id);
   } catch (e) { toast(e.message, 8000); $('yt-go').disabled = false; }
+}
+
+function ytWatch(id) {
+  watchJob(id, 'yt-job', (j) => {
+    $('yt-go').disabled = false;
+    if (j.state === 'done') { $('yt-job').innerHTML = ''; ytShow(j.result); ytRefresh(); }
+  });
+}
+
+// Texte du modèle → HTML : lignes « - » en puces (deux espaces de retrait = sous-puce),
+// les autres en paragraphes, **…** en gras. Les anciens résumés rédigés en paragraphe s'affichent tels quels.
+function ytText(s) {
+  let html = '', depth = 0;
+  for (const line of String(s || '').split('\n')) {
+    const m = line.match(/^(\s*)[-•*]\s+(.*)$/);
+    if (!m && !line.trim()) continue;
+    const d = m ? Math.min(3, Math.floor(m[1].length / 2) + 1) : 0;
+    while (depth < d) { html += '<ul>'; depth++; }
+    while (depth > d) { html += '</ul>'; depth--; }
+    const t = esc(m ? m[2] : line.trim()).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');   // le modèle met parfois du gras malgré la consigne
+    html += m ? `<li>${t}</li>` : `<p>${t}</p>`;
+  }
+  return html + '</ul>'.repeat(depth);
 }
 
 async function ytOpen(id, scroll) {
@@ -138,7 +165,7 @@ function ytShow(item) {
   box.innerHTML = `<h1><a href="${esc(m.webpage_url)}" target="_blank" rel="noopener">${esc(m.title)}</a></h1>
     <p class="muted small">${esc(m.channel || '')} · ${ytDuree(m.duration)} · ${subs}${skip} · ${fmtN(item.words)} mots lus en ${item.seconds} s
       <button class="link" onclick="ytRun(true)" title="relit la vidéo (sous-titres de l’auteur, sinon Whisper) et redemande un résumé au modèle lancé">refaire le résumé</button></p>
-    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><p>${esc(p.detail)}</p></details>`).join('')}
+    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytText(p.detail)}</div></details>`).join('')}
     <h2>Une question sur la vidéo ?</h2>
     <div id="yt-chat" class="chat">${item.questions.map(ytMsgs).join('') || '<span class="muted small">Le modèle répond d’après ce qui est dit dans la vidéo, en citant le moment (mm:ss). La première question est la plus longue : il relit la transcription.</span>'}</div>
     <div class="composer">
@@ -148,7 +175,7 @@ function ytShow(item) {
   const c = $('yt-chat'); c.scrollTop = c.scrollHeight;
 }
 
-const ytMsgs = (q) => `<div class="msg user">${esc(q.q)}</div><div class="msg assistant">${esc(q.a)}</div>`;
+const ytMsgs = (q) => `<div class="msg user">${esc(q.q)}</div><div class="msg assistant yt-a">${ytText(q.a)}</div>`;
 
 async function ytAsk() {
   const question = $('yt-q').value.trim();
@@ -161,14 +188,15 @@ async function ytAsk() {
   try {
     const d = await api('/api/youtube/ask', {id: item.meta.id, question});
     let j = d.job;
-    while (j.state === 'running') {     // file d'attente, chargement du modèle, réponse
+    for (let fails = 0; j.state === 'running';) {     // file d'attente, chargement du modèle, réponse
       await new Promise(r => setTimeout(r, 1000));
-      j = await api('/api/jobs/' + j.id);
+      try { j = await api('/api/jobs/' + j.id); fails = 0; }
+      catch (e) { if (++fails > 30) throw e; continue; }   // téléphone en veille, réseau coupé : on réessaie
       if ($('yt-wait')) $('yt-wait').textContent = j.detail || '…';
     }
     if (j.state !== 'done') throw new Error(j.error || 'annulé');
     item.questions.push({q: question, a: j.result.answer});
-    $('yt-wait').outerHTML = `<div class="msg assistant">${esc(j.result.answer)}</div>`;
+    $('yt-wait').outerHTML = `<div class="msg assistant yt-a">${ytText(j.result.answer)}</div>`;
   } catch (e) {
     $('yt-wait').outerHTML = `<div class="msg assistant warn-item">${esc(e.message)}</div>`;
   }

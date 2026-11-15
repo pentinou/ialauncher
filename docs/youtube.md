@@ -18,6 +18,8 @@ adresse ──► 1. métadonnées (yt-dlp -J)   titre, durée, chapitres, langu
               └─► 3. résumé par le llama-server lancé ──► JSON imposé {points: [{phrase, detail}]}
                         │
                     4. enregistré dans youtube/<id>.json ; questions sur la même transcription
+                       (transcription gardée dans <id>.part entre 2 et 3 : un échec du résumé
+                       ne fait pas refaire Whisper)
 ```
 
 ## Récupération : yt-dlp + Deno
@@ -47,13 +49,16 @@ résumer (traduire compris) est une seule tâche pour le modèle de texte. Le la
 l'onglet lui envoie la transcription (`/v1/chat/completions`) avec :
 
 - `response_format` + `json_schema` : la grammaire de llama-server garantit un JSON valide
-  (1 à 5 points, chacun `phrase` + `detail`) ;
+  (1 à 5 points, chacun `phrase` + `detail`, le détail en lignes « - », sous-puces à deux
+  espaces, rendues en liste par l'interface) ;
 - `chat_template_kwargs.enable_thinking = false` : résumer n'a pas besoin de raisonnement ;
 - température 0,3 ;
 - la transcription en texte suivi, avec un titre `##` à chaque chapitre YouTube (indice pour
   découper les sujets) et un repère `[mm:ss]` toutes les 30 s (pour citer un moment).
 
 Consignes clés du prompt : la phrase donne **la réponse, pas le sujet** (25 mots au plus) ;
+le détail en puces courtes plutôt qu'en paragraphe (demande de l'utilisateur), avec « → » ou des
+sous-puces pour un raisonnement en plusieurs étapes ;
 un seul point par défaut, plusieurs seulement pour des sujets indépendants, sans en mélanger
 deux ; ignorer sponsors et appels à s'abonner ; ne rien inventer ; toujours en français.
 L'exemple du prompt est volontairement hors sujet (pâte à pizza) : un exemple sur le
@@ -63,6 +68,13 @@ matériel informatique déteignait sur les résumés de vidéos de matériel.
 échanges. Ce début ne change pas d'une question à l'autre : `llama-server` le garde en cache
 et ne relit que la fin (mesuré : 18 s pour la 1re question sur 35 min de vidéo, puis 2 à 5 s).
 Les réponses sont demandées en texte simple, sans Markdown (l'interface affiche du texte brut).
+
+**Contexte** : le modèle des résumés est lancé à 64k. Avant chaque appel, la transcription est
+comptée par la route `/tokenize` de llama-server (+ 4096 jetons de réponse, 2048 pour une
+question) ; si elle dépasse le contexte du modèle lancé (lu dans `/props`), il est relancé à 64k.
+Au-delà, message d'erreur clair. Sur Qwen 3.8 27B (architecture hybride : 16 couches d'attention
+seulement), le cache prend 64 Ko par jeton : 4 Go pour 64k. Mesuré : 2 h 18 de débat transcrit
+par Whisper = 36 600 jetons, lus en 28 s, résumé en 44 s.
 
 **Taille du modèle** : mesuré avec Qwen 3.8 27B Q4_K_S (15,4 Go, tout en VRAM sur une
 RTX 3090, ~38 jetons/s) sur 9 vidéos FR et EN de 10 à 39 min : 10 à 30 s par résumé. Un modèle
@@ -97,8 +109,7 @@ on s'en passe.
 
 ## Pistes pour la suite
 
-- Vidéos de plus de ~1 h : découper par chapitres puis résumer les résumés (non prévu : le
-  besoin visé est la vidéo de 10 à 30 min).
+- Vidéos de plus de ~4 h : découper par chapitres puis résumer les résumés (non prévu).
 
 Écartés : `youtube-transcript-api` (sous-titres seulement, et il faudrait yt-dlp de toute
 façon pour l'audio) ; un service en ligne (tout reste local) ; un programme séparé (le launcher

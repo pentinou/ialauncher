@@ -133,11 +133,29 @@ def _estimate_ctx(spec, cfg):
     return p, m, hw, cfg
 
 
-def _llm_for_youtube(job):
+YOUTUBE_CTX = 65536   # ≈ 4 h de parole ; le cache de contexte du 27B y prend 4 Go
+
+
+def _server_ctx():
+    """Contexte réel du llama-server lancé (il peut l'avoir réduit pour tenir en VRAM)."""
+    try:
+        with urllib.request.urlopen(SERVER.base_url() + "/props", timeout=5) as r:
+            return json.loads(r.read())["default_generation_settings"]["n_ctx"]
+    except (OSError, ValueError, KeyError):
+        return (SERVER.cfg or {}).get("ctx", 8192) or YOUTUBE_CTX
+
+
+def _llm_for_youtube(job, need=0):
     """Adresse du llama-server pour l'onglet YouTube : celui qui tourne (quel que soit son
     modèle), sinon le modèle des résumés, lancé avec la configuration conseillée et un
-    contexte de 16k (≈ 30 min de vidéo). Appelé dans une tâche de la file « gen » : une
-    génération d'image ou de musique en cours est d'abord terminée."""
+    contexte de 64k. `need` : jetons à lire et à écrire ; s'ils ne tiennent pas dans le
+    contexte du modèle lancé, il est relancé à 64k. Appelé dans une tâche de la file « gen » :
+    une génération d'image ou de musique en cours est d'abord terminée."""
+    if need > YOUTUBE_CTX:
+        raise RuntimeError(f"vidéo trop longue pour le modèle : {need} jetons à lire, {YOUTUBE_CTX} au plus (≈ 4 h de parole)")
+    if SERVER.state == "ready" and need > _server_ctx():
+        job.set(detail=f"relance du modèle avec un contexte de {YOUTUBE_CTX // 1024}k ({need} jetons à lire)…")
+        SERVER.stop()
     if SERVER.state == "ready":
         return SERVER.base_url()
     if SERVER.state != "starting":
@@ -150,7 +168,7 @@ def _llm_for_youtube(job):
         cfg = recommend.recommend(p, hw, "balanced", _draft_profile(cfg), cfg)["cfg"]
         for k in ("mmproj_size", "model_present", "models_dir_bytes"):
             cfg.pop(k, None)
-        cfg["ctx"] = 16384
+        cfg["ctx"] = YOUTUBE_CTX
         services.claim_gpu("llama")
         SERVER.start(cfg, m)
     while SERVER.state == "starting":
@@ -159,6 +177,8 @@ def _llm_for_youtube(job):
         time.sleep(1)
     if SERVER.state != "ready":
         raise RuntimeError("le modèle n'a pas démarré : " + (SERVER.status().get("error") or "voir l'onglet Journaux"))
+    if need > _server_ctx():
+        raise RuntimeError(f"vidéo trop longue : {need} jetons à lire, le modèle n'a pu prendre qu'un contexte de {_server_ctx()}")
     return SERVER.base_url()
 
 
@@ -534,7 +554,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"deleted": youtube.delete(b.get("ids") or [])})
         if path == "/api/youtube/ask":
             j = jobs.start("youtube", f"Question YouTube — {b['question'][:50]}",
-                           lambda job: youtube.ask_saved(b["id"], b["question"], _llm_for_youtube(job)),
+                           lambda job: youtube.ask_saved(job, b["id"], b["question"], _llm_for_youtube),
                            queue="gen", who=self._who())
             return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/music/install":

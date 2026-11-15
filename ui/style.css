@@ -202,6 +202,8 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .yt-point{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 0;background:var(--bg)}
 .yt-point summary{cursor:pointer;font-size:16px;font-weight:600;line-height:1.4}
 .yt-point p{margin:10px 0 2px;line-height:1.5}
+.yt-det{margin:8px 0 2px;line-height:1.45}.yt-det p,.yt-a p{margin:4px 0}
+.yt-det ul,.yt-a ul{margin:4px 0;padding-left:20px}.yt-det li,.yt-a li{margin:3px 0}.yt-a{white-space:normal}
 .yt-gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px}
 .yt-card{border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;background:var(--bg)}
 .yt-card:hover,.yt-card.on{border-color:var(--acc)}
