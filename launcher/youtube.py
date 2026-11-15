@@ -314,6 +314,17 @@ def set_summary_lang(code):
     engine.save_config(cfg)
 
 
+def model_id():
+    """Modèle des résumés (id de models.py) : chargé tout seul si aucun modèle de texte ne tourne."""
+    return engine.load_config().get("youtube_model", "")
+
+
+def set_model(mid):
+    cfg = engine.load_config()
+    cfg["youtube_model"] = mid
+    engine.save_config(cfg)
+
+
 def _in_lang(prompt):
     return prompt.replace("{langue}", LANGS[summary_lang()])
 
@@ -480,9 +491,12 @@ def _drop_skipped(data):
     data["transcript"] = kept
 
 
-def run(job, url, base_url):
+def run(job, url, llm):
     """Tâche « Résumer » : sous-titres de l'auteur, sinon transcription par Whisper, puis
-    résumé, enregistrés ensemble."""
+    résumé, enregistrés ensemble. `llm(job)` renvoie l'adresse du llama-server, en le
+    lançant au besoin : appelé d'abord, pour que la carte graphique soit libérée (modèle
+    d'image ou de musique arrêté) avant Whisper."""
+    base_url = llm(job)
     job.set(0.05, "lecture de la vidéo et de ses sous-titres…")
     data = fetch(url)
     if not data["transcript"]:

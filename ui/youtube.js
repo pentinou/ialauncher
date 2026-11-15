@@ -44,11 +44,11 @@ async function ytRefresh() {
   if (t.ytdlp && t.deno && !t.whisper) $('yt-tools').innerHTML = `
       <div class="row-inline"><span>Il faut aussi <b>Whisper</b> : la plupart des vidéos n'ont pas de sous-titres écrits par leur auteur, et whisper.cpp transcrit alors l'audio. Le launcher le compile ${t.nvcc ? 'pour votre carte NVIDIA (CUDA, ~5 à 10 min)' : 'pour le processeur (pas de CUDA Toolkit trouvé : transcription lente)'}, puis télécharge le modèle large-v3-turbo (575 Mo) et, s'il n'est pas déjà installé, ffmpeg (160 Mo).</span>
       <button class="btn" onclick="ytInstall('install-whisper')">Installer</button></div><div id="yt-install-job"></div>`;
-  $('yt-llm').innerHTML = Y.status.llm ? `<span class="muted">Modèle : ${esc(Y.status.llm.name)}</span>`
-    : `<div class="warn-item">Aucun modèle de texte lancé.
-        <select id="yt-model"></select> <button class="btn small" id="yt-launch" onclick="ytLaunch()">Lancer (contexte 16k)</button>
-        <span class="muted">— configuration conseillée par le launcher ; à régler soi-même dans l'onglet <a href="#" onclick="showMode('text');return false">💬 Texte</a>. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, suffit pour 30 min de vidéo.</span></div>`;
-  if (!Y.status.llm) ytModels();
+  const llm = Y.status.llm;
+  $('yt-llm').innerHTML = `<div class="row-inline"><span class="muted">Modèle des résumés :</span>
+      <select id="yt-model" onchange="ytSetModel(this.value)" title="chargé tout seul (configuration conseillée, contexte 16k) quand aucun modèle de texte ne tourne ; un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, suffit pour 30 min de vidéo"></select>
+      <span class="muted">${!llm ? 'chargé au premier résumé (~30 s)' : llm.id === Y.status.model ? 'lancé' : `c’est <b>${esc(llm.name)}</b>, déjà lancé, qui sera utilisé`}</span></div>`;
+  ytModels();
   const h = Y.status.history;
   $('yt-count').textContent = h.length ? `(${h.length})` : '';
   $('yt-history').innerHTML = h.length ? h.map(x => `<div class="yt-card ${Y.item && Y.item.meta.id === x.id ? 'on' : ''}" onclick="ytOpen('${esc(x.id)}', true)" title="${esc(x.phrase)}">
@@ -87,29 +87,13 @@ async function ytLang(lang) {
 
 async function ytModels() {
   let d; try { d = await api('/api/models'); } catch (e) { return; }
-  const keep = LS.get('yt.model', '');
-  $('yt-model').innerHTML = d.models.filter(m => !m.draft).map(m =>
-    `<option value="${esc(m.id)}" ${m.id === keep ? 'selected' : ''}>${esc(m.name)} (${fmtG(m.size)})</option>`).join('');
+  const cur = Y.status.model;
+  $('yt-model').innerHTML = (cur ? '' : '<option value="">— à choisir —</option>') + d.models.filter(m => !m.draft).map(m =>
+    `<option value="${esc(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.name)} (${fmtG(m.size)})</option>`).join('');
 }
 
-async function ytLaunch() {
-  const id = $('yt-model').value;
-  if (!id) return;
-  LS.set('yt.model', id);
-  $('yt-launch').disabled = true;
-  try {
-    const cfg = (await api('/api/recommend', {model: {id}})).cfg;
-    for (const k of ['mmproj_size', 'model_present', 'models_dir_bytes']) delete cfg[k];
-    cfg.ctx = 16384;   // ≈ 30 min de vidéo ; moins de cache KV qu'un long contexte
-    await api('/api/server/start', {model: {id}, cfg});
-    $('yt-launch').textContent = 'chargement…';
-    for (;;) {
-      await new Promise(r => setTimeout(r, 2000));
-      const st = await api('/api/server');
-      if (st.state === 'ready') break;
-      if (st.state !== 'starting') throw new Error(st.error || 'le serveur s’est arrêté (voir l’onglet Journaux)');
-    }
-  } catch (e) { toast(e.message, 8000); }
+async function ytSetModel(id) {
+  try { await api('/api/youtube/model', {id}); toast('Modèle des résumés enregistré'); } catch (e) { toast(e.message); }
   ytRefresh();
 }
 
@@ -127,6 +111,7 @@ async function ytRun(again) {
   try {
     const d = await api('/api/youtube/run', {url, again: !!again});
     if (d.item) { ytShow(d.item); $('yt-go').disabled = false; return; }
+    if (d.ahead) toast(`En file d’attente : ${d.ahead} tâche${d.ahead > 1 ? 's' : ''} avant celle-ci (génération en cours)`, 5000);
     watchJob(d.job.id, 'yt-job', (j) => {
       $('yt-go').disabled = false;
       if (j.state === 'done') { $('yt-job').innerHTML = ''; ytShow(j.result); ytRefresh(); }
@@ -175,8 +160,15 @@ async function ytAsk() {
   $('yt-q').value = ''; Y.asking = true; $('yt-send').disabled = true;
   try {
     const d = await api('/api/youtube/ask', {id: item.meta.id, question});
-    item.questions.push({q: question, a: d.answer});
-    $('yt-wait').outerHTML = `<div class="msg assistant">${esc(d.answer)}</div>`;
+    let j = d.job;
+    while (j.state === 'running') {     // file d'attente, chargement du modèle, réponse
+      await new Promise(r => setTimeout(r, 1000));
+      j = await api('/api/jobs/' + j.id);
+      if ($('yt-wait')) $('yt-wait').textContent = j.detail || '…';
+    }
+    if (j.state !== 'done') throw new Error(j.error || 'annulé');
+    item.questions.push({q: question, a: j.result.answer});
+    $('yt-wait').outerHTML = `<div class="msg assistant">${esc(j.result.answer)}</div>`;
   } catch (e) {
     $('yt-wait').outerHTML = `<div class="msg assistant warn-item">${esc(e.message)}</div>`;
   }

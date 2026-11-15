@@ -498,9 +498,14 @@ ffmpeg`). L'audio de la vidéo est transcrit dans sa langue (piste d'origine si 
 doublée). Mesuré sur RTX 3090 : 35 min de vidéo transcrites en 70 s (+ ~30 s de
 téléchargement de l'audio) ; une vidéo de 15 min est résumée en ~1 min de bout en bout.
 
-**Quel modèle.** L'onglet ne prend pas la carte graphique de lui-même : sans modèle lancé,
-il propose les modèles présents et un bouton **Lancer (contexte 16k)** (configuration conseillée
-par le launcher), ou bien on le règle dans l'onglet Texte. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
+**Quel modèle.** Le menu **Modèle des résumés** (réglage du launcher, `youtube_model` dans
+`config.json`) désigne le modèle à charger quand aucun modèle de texte ne tourne : l'onglet le
+lance tout seul au premier résumé ou à la première question (configuration conseillée par le
+launcher, contexte 16k, ~30 s). Si un modèle de texte tourne déjà (pour un agent, par exemple),
+c'est lui qui sert. Résumés et questions passent dans **la même file d'attente que les
+générations** d'image, de vidéo et de musique : demandés pendant une génération, ils attendent
+qu'elle finisse (« en attente : N tâches avant celle-ci »), puis libèrent la carte graphique
+pour le modèle de texte. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
 contexte de **16k** couvre une vidéo de 30 min (≈ 9 000 jetons). Mesuré avec Qwen 3.8 27B
 (Q4_K_S, RTX 3090) : 10 à 30 s par résumé. Les questions
 suivantes sur la même vidéo répondent en 2 à 5 s : `llama-server` garde la transcription en
@@ -780,7 +785,7 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
 | POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
 | GET | `/api/youtube`, `/api/youtube/item?id=`, `/api/youtube/thumb?id=` | YouTube : outils installés, modèle lancé, langue des résumés, historique ; une vidéo résumée ; sa miniature |
-| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/lang`, `/api/youtube/run`, `/api/youtube/ask`, `/api/youtube/delete` | installer yt-dlp et Deno ; installer Whisper ; langue des résumés (`lang` : fr, en, es, de, it, pt) ; supprimer (`ids`) ; résumer (`url`, `again` pour refaire ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
+| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/lang`, `/api/youtube/model`, `/api/youtube/run`, `/api/youtube/ask`, `/api/youtube/delete` | installer yt-dlp et Deno ; installer Whisper ; langue des résumés (`lang` : fr, en, es, de, it, pt) ; modèle des résumés (`id`) ; supprimer (`ids`) ; résumer (`url`, `again` pour refaire ; tâche de la file « gen », ou résultat enregistré) ; question (`id`, `question` ; tâche de la file « gen », réponse dans `result.answer`) |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation
