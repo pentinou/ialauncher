@@ -25,7 +25,7 @@ from html import unescape
 from urllib.error import HTTPError
 from urllib.parse import quote
 
-from . import paths, download, catalog, gen_catalog, engine, sdcpp, music, models
+from . import paths, download, catalog, gen_catalog, engine, sdcpp, music, models, youtube
 
 HF = "https://huggingface.co"
 SD_RAW = "https://raw.githubusercontent.com/leejet/stable-diffusion.cpp"
@@ -157,16 +157,45 @@ def _check_ace():
     return it
 
 
+def _check_ytdlp():
+    it = {"id": "ytdlp", "name": "yt-dlp + Deno", "role": "YouTube : lecture des vidéos", "installed": "", "latest": "",
+          "update": False, "replace": True}
+    v = youtube.versions()
+    if not v["ytdlp"]:
+        it["note"] = "non installé : onglet YouTube"
+        return it
+    y = download.fetch_json("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")["tag_name"]
+    d = download.fetch_json("https://api.github.com/repos/denoland/deno/releases/latest")["tag_name"].lstrip("v")
+    it.update(installed=f"{v['ytdlp']} · Deno {v['deno']}", latest=f"{y} · Deno {d}", update=(v["ytdlp"], v["deno"]) != (y, d),
+              action={"url": "/api/youtube/install", "body": {}}, long="téléchargement (~100 Mo)",
+              note="YouTube casse régulièrement les anciennes versions de yt-dlp (erreurs 403) : à garder à jour.")
+    return it
+
+
+def _check_whisper():
+    it = {"id": "whisper", "name": "whisper.cpp", "role": "YouTube : transcription", "installed": "", "latest": "",
+          "update": False, "replace": True}
+    v = youtube.versions()["whisper"]
+    if not v:
+        it["note"] = "non installé : onglet YouTube"
+        return it
+    latest = download.fetch_json(youtube.WHISPER_API)["tag_name"]
+    it.update(installed=v, latest=latest, update=v != latest, action={"url": "/api/youtube/install-whisper", "body": {}},
+              long="compilation locale (5 à 10 min)")
+    return it
+
+
 def engines():
-    names = {_check_llama: "llama.cpp", _check_sd: "stable-diffusion.cpp", _check_ace: "ACE-Step"}
+    names = {_check_llama: "llama.cpp", _check_sd: "stable-diffusion.cpp", _check_ace: "ACE-Step",
+             _check_ytdlp: "yt-dlp + Deno", _check_whisper: "whisper.cpp"}
 
     def safe(fn):
         try:
             return fn()
         except Exception as e:  # noqa: BLE001 — hors ligne, GitHub limité…
             return {"id": fn.__name__, "name": names[fn], "error": str(e)[:200]}
-    with ThreadPoolExecutor(3) as ex:
-        return list(ex.map(safe, [_check_llama, _check_sd, _check_ace]))
+    with ThreadPoolExecutor(5) as ex:
+        return list(ex.map(safe, [_check_llama, _check_sd, _check_ace, _check_ytdlp, _check_whisper]))
 
 # ---------------------------------------------------------------- noms de modèles
 

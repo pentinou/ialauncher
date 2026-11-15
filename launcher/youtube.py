@@ -83,6 +83,24 @@ def status():
             "nvcc": bool(engine.toolchain()["nvcc"])}
 
 
+def versions():
+    """Versions installées (« » si absent) : pour l'onglet Mises à jour."""
+    def out(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.split()
+        except OSError:
+            return []
+    v = {"ytdlp": "", "deno": "", "whisper": ""}
+    if ytdlp_path().is_file():
+        v["ytdlp"] = (out([sys.executable, str(ytdlp_path()), "--version"]) or [""])[0]
+    if deno_path().is_file():
+        v["deno"] = (out([str(deno_path()), "--version"]) + ["", ""])[1]   # « deno 2.9.8 (stable…) »
+    if whisper_cli().is_file():
+        f = whisper_dir() / "VERSION"
+        v["whisper"] = f.read_text().strip() if f.is_file() else "version inconnue"
+    return v
+
+
 def install(job):
     """Télécharge (ou remplace par la dernière version) yt-dlp et Deno."""
     job.set(0.02, "yt-dlp…")
@@ -94,7 +112,10 @@ def install(job):
     download.download(DENO_URL.format(_deno_triple()), str(z), job, None, "Deno")
     if job.cancel_requested:
         return None
-    engine._extract(str(z), tools_dir())
+    new = tools_dir() / "deno-nouveau"
+    engine._extract(str(z), new)
+    os.replace(new / deno_path().name, deno_path())   # pas de réécriture d'un binaire en cours d'exécution
+    shutil.rmtree(new, ignore_errors=True)
     z.unlink(missing_ok=True)
     job.set(1.0, "yt-dlp et Deno installés")
     return status()
@@ -134,7 +155,8 @@ def install_whisper(job):
     if not built:
         raise RuntimeError("compilation terminée mais whisper-cli introuvable")
     whisper_dir().mkdir(parents=True, exist_ok=True)
-    shutil.copy2(built, whisper_cli())
+    shutil.copy2(built, whisper_dir() / "whisper-cli.nouveau")   # remplacement d'un coup, comme Deno
+    os.replace(whisper_dir() / "whisper-cli.nouveau", whisper_cli())
     shutil.rmtree(src_dir, ignore_errors=True)
     if not whisper_model().is_file():
         job.set(0.6, "modèle large-v3-turbo…")
@@ -143,6 +165,7 @@ def install_whisper(job):
             return None
     if not ffmpeg_bin():
         _install_ffmpeg(job)
+    (whisper_dir() / "VERSION").write_text(tag)
     job.set(1.0, f"Whisper installé ({tag}{', CUDA' if tc['nvcc'] else ', processeur seul'})")
     return status()
 

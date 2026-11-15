@@ -97,7 +97,6 @@ on s'en passe.
 
 ## Pistes pour la suite
 
-- **Mises à jour** : proposer yt-dlp et Deno dans l'onglet Mises à jour.
 - Vidéos de plus de ~1 h : découper par chapitres puis résumer les résumés (non prévu : le
   besoin visé est la vidéo de 10 à 30 min).
 
