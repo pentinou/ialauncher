@@ -23,7 +23,11 @@ async function loadYoutube() {
       <div id="yt-llm" class="small"></div>
       <div id="yt-job"></div></section>
       <section class="card hidden" id="yt-result"></section>
-      <section class="card"><h1>Déjà résumées</h1><div id="yt-history"></div></section>`;
+      <section class="card"><h1>Déjà résumées <span class="muted small" id="yt-count"></span></h1>
+        <div class="row-inline small"><span class="muted">Faire le ménage :</span>
+          <select id="yt-clean"><option value="7">résumés de plus de 7 jours</option><option value="30">résumés de plus de 30 jours</option><option value="0">tous les résumés</option></select>
+          <button class="btn small" onclick="ytClean()">Supprimer</button></div>
+        <div id="yt-history" class="yt-gal"></div></section>`;
     root.dataset.ready = '1';
   }
   await ytRefresh();
@@ -46,9 +50,34 @@ async function ytRefresh() {
         <span class="muted">— configuration conseillée par le launcher ; à régler soi-même dans l'onglet <a href="#" onclick="showMode('text');return false">💬 Texte</a>. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, suffit pour 30 min de vidéo.</span></div>`;
   if (!Y.status.llm) ytModels();
   const h = Y.status.history;
-  $('yt-history').innerHTML = h.length ? h.map(x => `<div class="yt-hist" onclick="ytOpen('${esc(x.id)}')">
-      <div><b>${esc(x.title)}</b> <span class="muted small">${esc(x.channel || '')} · ${ytDuree(x.duration)}</span></div>
-      <div class="small">${esc(x.phrase)}</div></div>`).join('') : '<span class="muted">aucune pour l’instant</span>';
+  $('yt-count').textContent = h.length ? `(${h.length})` : '';
+  $('yt-history').innerHTML = h.length ? h.map(x => `<div class="yt-card ${Y.item && Y.item.meta.id === x.id ? 'on' : ''}" onclick="ytOpen('${esc(x.id)}', true)" title="${esc(x.phrase)}">
+      <div class="yt-thumb"><img loading="lazy" alt="" src="/api/youtube/thumb?id=${esc(x.id)}" onerror="this.remove()">
+        <span class="yt-dur">${ytMinSec(x.duration)}</span>
+        <button class="yt-del" title="supprimer ce résumé" onclick="event.stopPropagation(); ytDelete(['${esc(x.id)}'])">✕</button></div>
+      <div class="yt-ct"><b>${esc(x.title)}</b><span class="muted small">${esc(x.channel || '')} · ${new Date(x.at * 1000).toLocaleDateString('fr-FR')}</span></div>
+    </div>`).join('') : '<span class="muted">aucune pour l’instant</span>';
+}
+
+const ytMinSec = (s) => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '';
+
+async function ytDelete(ids, ask = true) {
+  if (!ids.length) { toast('Rien à supprimer'); return; }
+  if (ask && !confirm(ids.length > 1 ? `Supprimer ${ids.length} résumés (et leurs questions) ?` : 'Supprimer ce résumé (et ses questions) ?')) return;
+  try {
+    const d = await api('/api/youtube/delete', {ids});
+    if (Y.item && ids.includes(Y.item.meta.id)) { Y.item = null; LS.set('yt.last', ''); $('yt-result').classList.add('hidden'); }
+    toast(`${d.deleted} résumé${d.deleted > 1 ? 's' : ''} supprimé${d.deleted > 1 ? 's' : ''}`);
+  } catch (e) { toast(e.message); }
+  ytRefresh();
+}
+
+function ytClean() {
+  const days = +$('yt-clean').value, limit = Date.now() / 1000 - days * 86400;
+  const ids = Y.status.history.filter(x => !days || x.at < limit).map(x => x.id);
+  const what = $('yt-clean').selectedOptions[0].text;
+  if (!ids.length) { toast(`Aucun : ${what}`); return; }
+  if (confirm(`Supprimer ${ids.length} résumé${ids.length > 1 ? 's' : ''} (${what}), avec leurs questions ?`)) ytDelete(ids, false);
 }
 
 async function ytLang(lang) {
@@ -105,9 +134,11 @@ async function ytRun(again) {
   } catch (e) { toast(e.message, 8000); $('yt-go').disabled = false; }
 }
 
-async function ytOpen(id) {
+async function ytOpen(id, scroll) {
   try { ytShow(await api('/api/youtube/item?id=' + encodeURIComponent(id))); }
-  catch (e) { LS.set('yt.last', ''); }
+  catch (e) { LS.set('yt.last', ''); return; }
+  document.querySelectorAll('.yt-card').forEach(c => c.classList.toggle('on', c.getAttribute('onclick').includes(`'${id}'`)));
+  if (scroll) $('yt-result').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
 function ytShow(item) {

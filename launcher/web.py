@@ -213,6 +213,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/youtube":
             return self._json({"tools": youtube.status(), "history": youtube.history(), "lang": youtube.summary_lang(),
                                "llm": SERVER.status()["model"] if SERVER.state == "ready" else None})
+        if path == "/api/youtube/thumb":
+            data = youtube.thumb(q.get("id", ""))
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=604800")   # une miniature ne change pas
+            self.end_headers()
+            return self.wfile.write(data)
         if path == "/api/youtube/item":
             rec = youtube.load(q.get("id", ""))
             return self._json(youtube.public(rec) if rec else {"error": "vidéo inconnue"}, 200 if rec else 404)
@@ -487,6 +495,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/youtube/lang":
             youtube.set_summary_lang(b.get("lang", ""))
             return self._json({"lang": youtube.summary_lang()})
+        if path == "/api/youtube/delete":
+            return self._json({"deleted": youtube.delete(b.get("ids") or [])})
         if path == "/api/youtube/ask":
             if SERVER.state != "ready":
                 return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
