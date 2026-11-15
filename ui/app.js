@@ -108,7 +108,7 @@ async function selectEngine(path) { S.engine = await api('/api/engine/select', {
 // ------------------------------------------------------------------ tâches de fond
 const JOBS = {};
 function watchJob(id, boxId, onDone) {
-  JOBS[id] = {boxId, onDone};
+  JOBS[id] = {boxId, onDone, fails: 0};
   pollJobs();
 }
 let jobTimer;
@@ -119,6 +119,7 @@ async function pollJobs() {
   for (const id of ids) {
     try {
       const j = await api('/api/jobs/' + id);
+      JOBS[id].fails = 0;
       const box = $(JOBS[id].boxId);
       if (box) {
         // le bloc est redessiné chaque seconde : garder le journal ouvert et sa position de défilement
@@ -133,7 +134,13 @@ async function pollJobs() {
         if (j.state === 'error') toast('Échec : ' + j.error, 8000); else if (j.state === 'done') toast(j.label + ' — terminé');
         if (cb) cb(j);
       }
-    } catch (e) { delete JOBS[id]; }
+    } catch (e) {
+      // une requête ratée (téléphone en veille, réseau coupé) ne fait pas perdre le suivi ;
+      // au bout de 30 échecs de suite, on le dit au lieu de laisser une barre figée
+      if (++JOBS[id].fails < 30) continue;
+      const box = $(JOBS[id].boxId); delete JOBS[id];
+      if (box) box.insertAdjacentHTML('beforeend', `<div class="warn-item error">suivi interrompu (${esc(e.message)}) : rechargez la page</div>`);
+    }
   }
   if (Object.keys(JOBS).length) jobTimer = setTimeout(pollJobs, 1000);
 }

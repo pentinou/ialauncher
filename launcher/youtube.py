@@ -194,6 +194,9 @@ def _ytdlp(args, timeout=120):
     cmd = [sys.executable, str(ytdlp_path()), "--no-warnings", "--no-playlist",
            "--js-runtimes", f"deno:{deno_path()}", *args]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    if r.returncode != 0 and "HTTP Error 403" in r.stderr:   # refus passager de YouTube : un 2e essai passe
+        time.sleep(5)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if r.returncode != 0:
         err = [line for line in r.stderr.splitlines() if "ERROR" in line] or r.stderr.splitlines()[-1:]
         raise RuntimeError("yt-dlp : " + (err[0] if err else f"code {r.returncode}"))
@@ -267,9 +270,11 @@ Tu reçois le titre, la transcription (sous-titres de l'auteur, ou transcription
 Règles :
 - Chaque point a une « phrase » qui donne l'information elle-même : la réponse, la conclusion, le conseil, le chiffre clé. Jamais le simple sujet. Une seule ligne : 25 mots au plus.
   Mauvais : « La vidéo parle de pâte à pizza. » Bon : « Une pâte laissée 48 h au frigo a plus de goût qu'une pâte levée 2 h à température ambiante. »
-- « detail » : 4 à 6 phrases qui expliquent le pourquoi et le comment, avec les chiffres, noms et exemples importants de la vidéo.
+- « detail » : l'explication en liste à puces, pas en paragraphe rédigé. Une idée courte par ligne, chaque ligne commence par « - » ; 3 à 8 puces, avec le pourquoi, le comment, les chiffres, noms et exemples importants de la vidéo.
+  Un raisonnement en plusieurs étapes s'écrit avec des flèches (« prix de l'énergie en hausse → production plus chère → hausse des prix ») ou en sous-puces : deux espaces puis « - ».
 - Un seul point par défaut. Plusieurs points (5 au maximum) seulement si la vidéo traite de sujets indépendants (revue d'actualité, plusieurs nouvelles sans lien) : un point par sujet, dans l'ordre de la vidéo, sans mélanger deux sujets dans un même point. Un tutoriel, un test ou un comparatif reste un seul point, même s'il a des chapitres.
 - Ignore les sponsors, les demandes d'abonnement, les introductions et les anecdotes sans rapport.
+- Dans un débat, une interview ou une vidéo d'opinion, attribue les affirmations à qui les défend (« selon X… », « X soutient que… ») au lieu de les présenter comme des faits établis.
 - N'invente rien qui ne soit pas dans la transcription. Si la vidéo ne donne pas vraiment de réponse, dis-le dans la phrase.
 - Réponds toujours en {langue}, même si la vidéo est dans une autre langue ; garde les termes techniques usuels."""
 
@@ -338,10 +343,21 @@ def _chat(base_url, body, timeout):
     return rep["choices"][0]["message"]["content"], {"usage": rep.get("usage"), "timings": rep.get("timings")}
 
 
-def summarize(data, base_url, timeout=600):
-    """Résumé par le llama-server de `base_url` : {"points": [{"phrase", "detail"}]}."""
-    text, stats = _chat(base_url, {
-        "messages": [{"role": "system", "content": _in_lang(SYSTEM)}, {"role": "user", "content": _prompt(data)}],
+def _tokens(base_url, messages):
+    """Nombre de jetons des messages pour le modèle lancé (route /tokenize de llama-server),
+    plus une marge pour le gabarit de conversation."""
+    req = urllib.request.Request(f"{base_url}/tokenize", headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"content": "\n".join(m["content"] for m in messages)}).encode())
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return len(json.loads(r.read())["tokens"]) + 50 * len(messages)
+
+
+def summarize(job, data, llm, base_url, timeout=900):
+    """Résumé par le llama-server : {"points": [{"phrase", "detail"}]}."""
+    messages = [{"role": "system", "content": _in_lang(SYSTEM)}, {"role": "user", "content": _prompt(data)}]
+    # `llm(job, besoin)` relance le modèle avec plus de contexte si la transcription n'y tient pas
+    base_url = llm(job, _tokens(base_url, messages) + 4096)   # + la réponse
+    text, stats = _chat(base_url, {"messages": messages,
         "response_format": {"type": "json_schema", "json_schema": {"name": "resume", "schema": SCHEMA}}}, timeout)
     return {**json.loads(text), **stats}
 
@@ -350,15 +366,17 @@ SYSTEM_QUESTION = """Tu réponds aux questions d'une personne sur une vidéo You
 Tu disposes de sa transcription (sous-titres de l'auteur, ou transcription automatique : fautes et noms propres écorchés possibles).
 Réponds en {langue}, brièvement, en t'appuyant uniquement sur la transcription ; si la vidéo n'aborde pas la question, dis-le.
 Quand c'est utile, indique le moment de la vidéo (mm:ss) où le passage se trouve.
-Écris en texte simple, sans Markdown (ni **, ni #) ; des tirets pour une liste si besoin."""
+Si une ligne suffit, réponds en une ligne. Sinon, des puces courtes plutôt que des paragraphes rédigés : chaque ligne commence par « - » ; pour un raisonnement en plusieurs étapes, des flèches (« A → B → C ») ou des sous-puces (deux espaces puis « - »).
+Pas d'autre Markdown (ni **, ni #)."""
 
 
-def ask(data, history, question, base_url, timeout=600):
+def ask(job, data, history, question, llm, base_url, timeout=900):
     """Question libre sur la vidéo. `history` : [{"role": "user"|"assistant", "content"}] des
     échanges précédents. Le début du message (consignes + transcription) ne change pas d'une
     question à l'autre : llama-server le garde en cache et ne relit que la fin."""
     messages = [{"role": "system", "content": _in_lang(SYSTEM_QUESTION) + "\n\n" + _prompt(data)},
                 *history, {"role": "user", "content": question}]
+    base_url = llm(job, _tokens(base_url, messages) + 2048)
     text, stats = _chat(base_url, {"messages": messages}, timeout)
     return {"answer": text, **stats}
 
@@ -407,6 +425,7 @@ def delete(ids):
             n += 1
         f.unlink(missing_ok=True)
         _file(vid, "jpg").unlink(missing_ok=True)
+        _file(vid, "part").unlink(missing_ok=True)
     return n
 
 
@@ -493,36 +512,51 @@ def _drop_skipped(data):
 
 def run(job, url, llm):
     """Tâche « Résumer » : sous-titres de l'auteur, sinon transcription par Whisper, puis
-    résumé, enregistrés ensemble. `llm(job)` renvoie l'adresse du llama-server, en le
-    lançant au besoin : appelé d'abord, pour que la carte graphique soit libérée (modèle
-    d'image ou de musique arrêté) avant Whisper."""
-    base_url = llm(job)
-    job.set(0.05, "lecture de la vidéo et de ses sous-titres…")
-    data = fetch(url)
-    if not data["transcript"]:
-        if not status()["whisper"]:
-            raise RuntimeError("cette vidéo n'a pas de sous-titres écrits par son auteur : installez Whisper (bouton en haut de l'onglet) pour la transcrire")
-        data["transcript"], lang = transcribe(job, data, 0.1, 0.6)
-        data["meta"]["subs"] = {"lang": lang, "kind": "whisper"}
-        data["meta"]["language"] = data["meta"]["language"] or lang
-    _drop_skipped(data)
+    résumé, enregistrés ensemble. `llm(job, besoin=0)` renvoie l'adresse du llama-server, en
+    le lançant au besoin (ou en le relançant avec plus de contexte) : appelé avant Whisper,
+    pour que la carte graphique soit libérée (modèle d'image ou de musique arrêté).
+    La transcription est gardée à part (<id>.part) jusqu'au résumé : s'il échoue, un nouvel
+    essai ne retranscrit pas la vidéo."""
+    vid = video_id(url)
+    part = _file(vid, "part")
+    try:
+        data = json.loads(part.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if data:
+        job.label = f"Résumé YouTube — {data['meta']['title']}"
+        base_url = llm(job)
+    else:
+        job.set(0.05, "lecture de la vidéo et de ses sous-titres…")
+        data = fetch(url)
+        job.label = f"Résumé YouTube — {data['meta']['title']}"
+        base_url = llm(job)
+        if not data["transcript"]:
+            if not status()["whisper"]:
+                raise RuntimeError("cette vidéo n'a pas de sous-titres écrits par son auteur : installez Whisper (bouton en haut de l'onglet) pour la transcrire")
+            data["transcript"], lang = transcribe(job, data, 0.1, 0.6)
+            data["meta"]["subs"] = {"lang": lang, "kind": "whisper"}
+            data["meta"]["language"] = data["meta"]["language"] or lang
+        _drop_skipped(data)
+        part.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     words = sum(len(t.split()) for _, t in data["transcript"])
     job.set(max(job.progress, 0.6) if data["meta"]["subs"]["kind"] == "whisper" else 0.3, f"résumé par le modèle ({words} mots à lire)…")
     t0 = time.time()
-    summary = summarize(data, base_url)
+    summary = summarize(job, data, llm, base_url)
     rec = {**data, "summary": summary, "questions": [], "at": time.time(), "seconds": round(time.time() - t0)}
     _save(rec)
+    part.unlink(missing_ok=True)
     return public(rec)
 
 
-def ask_saved(vid, question, base_url):
+def ask_saved(job, vid, question, llm):
     """Question libre sur une vidéo déjà résumée ; l'échange est enregistré avec elle."""
     rec = load(vid)
     if not rec:
         raise RuntimeError("vidéo inconnue : résumez-la d'abord")
     history_ = [m for q in rec["questions"] for m in ({"role": "user", "content": q["q"]},
                                                       {"role": "assistant", "content": q["a"]})]
-    r = ask(rec, history_, question, base_url)
+    r = ask(job, rec, history_, question, llm, llm(job))
     rec["questions"].append({"q": question, "a": r["answer"]})
     _save(rec)
     return {"answer": r["answer"], "timings": r.get("timings")}
