@@ -49,8 +49,9 @@ résumer (traduire compris) est une seule tâche pour le modèle de texte. Le la
 l'onglet lui envoie la transcription (`/v1/chat/completions`) avec :
 
 - `response_format` + `json_schema` : la grammaire de llama-server garantit un JSON valide
-  (1 à 5 points, chacun `phrase` + `detail`, le détail en lignes « - », sous-puces à deux
-  espaces, rendues en liste par l'interface) ;
+  (1 à 5 points, chacun `phrase` + `detail`, le détail étant une **liste de puces** ; un élément
+  qui commence par « > » est une sous-puce). Un texte libre en « - » ne suffisait pas : le modèle
+  mettait parfois toutes les puces sur une seule ligne ;
 - `chat_template_kwargs.enable_thinking = false` : résumer n'a pas besoin de raisonnement ;
 - température 0,3 ;
 - la transcription en texte suivi, avec un titre `##` à chaque chapitre YouTube (indice pour

@@ -130,6 +130,13 @@ function ytWatch(id) {
   });
 }
 
+// Détail d'un point → texte en lignes « - » : liste de puces (« > » = sous-puce) ; les anciens
+// résumés (un texte) passent tels quels.
+function ytDetail(d) {
+  if (!Array.isArray(d)) return d;
+  return d.map(x => x.trim().startsWith('>') ? '  - ' + x.trim().slice(1).trim() : '- ' + x.trim().replace(/^[-•*]\s+/, '')).join('\n');
+}
+
 // Texte du modèle → HTML : lignes « - » en puces (deux espaces de retrait = sous-puce),
 // les autres en paragraphes, **…** en gras. Les anciens résumés rédigés en paragraphe s'affichent tels quels.
 function ytText(s) {
@@ -165,7 +172,7 @@ function ytShow(item) {
   box.innerHTML = `<h1><a href="${esc(m.webpage_url)}" target="_blank" rel="noopener">${esc(m.title)}</a></h1>
     <p class="muted small">${esc(m.channel || '')} · ${ytDuree(m.duration)} · ${subs}${skip} · ${fmtN(item.words)} mots lus en ${item.seconds} s
       <button class="link" onclick="ytRun(true)" title="relit la vidéo (sous-titres de l’auteur, sinon Whisper) et redemande un résumé au modèle lancé">refaire le résumé</button></p>
-    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytText(p.detail)}</div></details>`).join('')}
+    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytText(ytDetail(p.detail))}</div></details>`).join('')}
     <h2>Une question sur la vidéo ?</h2>
     <div id="yt-chat" class="chat">${item.questions.map(ytMsgs).join('') || '<span class="muted small">Le modèle répond d’après ce qui est dit dans la vidéo, en citant le moment (mm:ss). La première question est la plus longue : il relit la transcription.</span>'}</div>
     <div class="composer">
