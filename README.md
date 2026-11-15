@@ -455,8 +455,8 @@ Beaucoup de vidéos durent 15 minutes pour une information qui tient en une lign
 **▶ YouTube** prend l'adresse d'une vidéo et donne :
 
 - **l'essentiel en une phrase** : la réponse, la conclusion ou le conseil, pas le sujet.
-  Une vidéo qui traite de plusieurs sujets indépendants (revue d'actualité…) donne un point
-  par sujet, 5 au plus ;
+  Une revue d'actualité (des nouvelles sans lien entre elles) donne un point par nouvelle,
+  5 au plus ; un test, un classement, une interview ou un débat reste un seul point, même long ;
 - **l'explication** en puces courtes (chiffres et noms compris ; flèches ou sous-puces pour un
   raisonnement en plusieurs étapes) en cliquant sur la phrase ;
 - **une fenêtre de questions** : le modèle répond d'après ce qui est dit dans la vidéo, en
@@ -520,10 +520,10 @@ cache et ne relit que la question.
 transcription, résumé, questions) avec sa miniature (`<id>.jpg`, 320 × 180, ~20 Ko, prise une
 fois chez YouTube). « Déjà résumées » les montre en galerie : un clic rouvre le résumé et ses
 questions, instantanément. ✕ sur une miniature supprime ce résumé ; **Faire le ménage**
-supprime ceux de plus de 7 ou 30 jours, ou tous. « refaire le résumé » relit
-la vidéo (sous-titres de l'auteur, sinon Whisper) et redemande au modèle lancé : c'est
-aussi le moyen de refaire une vidéo résumée avant cette règle à partir des sous-titres
-automatiques.
+supprime ceux de plus de 7 ou 30 jours, ou tous. « refaire le résumé » redemande
+un résumé au modèle sur la transcription déjà enregistrée (quelques secondes, questions
+gardées). Pour relire la vidéo elle-même (une vidéo résumée autrefois à partir des sous-titres
+automatiques, par exemple), supprimez-la de la galerie puis résumez-la à nouveau.
 
 **yt-dlp à jour.** YouTube casse régulièrement les anciennes versions (erreurs 403) :
 l'onglet **🔄 Mises à jour** compare yt-dlp, Deno et whisper.cpp aux dernières versions
