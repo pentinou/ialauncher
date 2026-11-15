@@ -506,8 +506,11 @@ contexte de **16k** couvre une vidéo de 30 min (≈ 9 000 jetons). Mesuré avec
 suivantes sur la même vidéo répondent en 2 à 5 s : `llama-server` garde la transcription en
 cache et ne relit que la question.
 
-**Historique.** Chaque vidéo est enregistrée dans `youtube/<id>.json` (métadonnées,
-transcription, résumé, questions) : la rouvrir est instantané. « refaire le résumé » relit
+**Galerie.** Chaque vidéo résumée est enregistrée dans `youtube/<id>.json` (métadonnées,
+transcription, résumé, questions) avec sa miniature (`<id>.jpg`, 320 × 180, ~20 Ko, prise une
+fois chez YouTube). « Déjà résumées » les montre en galerie : un clic rouvre le résumé et ses
+questions, instantanément. ✕ sur une miniature supprime ce résumé ; **Faire le ménage**
+supprime ceux de plus de 7 ou 30 jours, ou tous. « refaire le résumé » relit
 la vidéo (sous-titres de l'auteur, sinon Whisper) et redemande au modèle lancé : c'est
 aussi le moyen de refaire une vidéo résumée avant cette règle à partir des sous-titres
 automatiques.
@@ -583,7 +586,7 @@ diffusion/ modèles d'image et de vidéo (un sous-dossier par dépôt Hugging Fa
            checkpoints/ et loras/ (Civitai, avec un .json de métadonnées ; loras/webui-*/ = liens vers la WebUI)
 apps/      ACE-Step-1.5 (code, environnement Python .venv, checkpoints/)
 outputs/   image/, video/, music/ : les générations et leurs réglages (.json)
-youtube/   un .json par vidéo résumée : métadonnées, transcription, résumé, questions
+youtube/   par vidéo résumée : <id>.json (métadonnées, transcription, résumé, questions), <id>.jpg (miniature)
 presets/   configurations enregistrées (JSON)
 agents/    scripts générés pour Claude Code / Codex / OpenCode
 cache/     en-têtes GGUF déjà lus, catalogue Hugging Face, sources llama.cpp
@@ -776,8 +779,8 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET/POST | `/api/civitai/search` (`type` : Checkpoint, LORA, Base), `/api/civitai/base-prefill?model=&version=`, `/api/civitai/token`, `/api/civitai/download` | Civitai (`base-prefill` : fiche d'un modèle de base d'après la doc de sd.cpp) |
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
 | POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
-| GET | `/api/youtube`, `/api/youtube/item?id=` | YouTube : outils installés, modèle lancé, langue des résumés, historique ; une vidéo résumée |
-| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/lang`, `/api/youtube/run`, `/api/youtube/ask` | installer yt-dlp et Deno ; installer Whisper ; langue des résumés (`lang` : fr, en, es, de, it, pt) ; résumer (`url`, `again` pour refaire ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
+| GET | `/api/youtube`, `/api/youtube/item?id=`, `/api/youtube/thumb?id=` | YouTube : outils installés, modèle lancé, langue des résumés, historique ; une vidéo résumée ; sa miniature |
+| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/lang`, `/api/youtube/run`, `/api/youtube/ask`, `/api/youtube/delete` | installer yt-dlp et Deno ; installer Whisper ; langue des résumés (`lang` : fr, en, es, de, it, pt) ; supprimer (`ids`) ; résumer (`url`, `again` pour refaire ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation

@@ -361,8 +361,11 @@ def video_id(url):
     return m.group(1) if m else None
 
 
-def _file(vid):
-    return paths.sub("youtube") / f"{vid}.json"
+def _file(vid, ext="json"):
+    # l'identifiant arrive de l'URL : 11 caractères YouTube, rien d'autre (pas de « ../ »)
+    if not re.fullmatch(r"[\w-]{11}", vid or ""):
+        raise ValueError(f"identifiant de vidéo invalide : {vid!r}")
+    return paths.sub("youtube") / f"{vid}.{ext}"
 
 
 def load(vid):
@@ -374,6 +377,26 @@ def load(vid):
 
 def _save(rec):
     _file(rec["meta"]["id"]).write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+
+
+def thumb(vid):
+    """Miniature de la vidéo (320 × 180), téléchargée une fois puis gardée à côté de son résumé."""
+    f = _file(vid, "jpg")
+    if not f.is_file():
+        download.download(f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg", str(f))
+    return f.read_bytes()
+
+
+def delete(ids):
+    """Supprime résumés et miniatures ; renvoie le nombre de vidéos supprimées."""
+    n = 0
+    for vid in ids:
+        f = _file(vid)
+        if f.is_file():
+            n += 1
+        f.unlink(missing_ok=True)
+        _file(vid, "jpg").unlink(missing_ok=True)
+    return n
 
 
 def public(rec):
