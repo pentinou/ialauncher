@@ -133,6 +133,35 @@ def _estimate_ctx(spec, cfg):
     return p, m, hw, cfg
 
 
+def _llm_for_youtube(job):
+    """Adresse du llama-server pour l'onglet YouTube : celui qui tourne (quel que soit son
+    modèle), sinon le modèle des résumés, lancé avec la configuration conseillée et un
+    contexte de 16k (≈ 30 min de vidéo). Appelé dans une tâche de la file « gen » : une
+    génération d'image ou de musique en cours est d'abord terminée."""
+    if SERVER.state == "ready":
+        return SERVER.base_url()
+    if SERVER.state != "starting":
+        mid = youtube.model_id()
+        m = models.find(mid) if mid else None
+        if not m:
+            raise RuntimeError("aucun modèle des résumés choisi (menu « Modèle » de l'onglet YouTube)")
+        job.set(detail=f"chargement du modèle {m['name']}…")
+        p, _, hw, cfg = _estimate_ctx({"id": mid}, {})
+        cfg = recommend.recommend(p, hw, "balanced", _draft_profile(cfg), cfg)["cfg"]
+        for k in ("mmproj_size", "model_present", "models_dir_bytes"):
+            cfg.pop(k, None)
+        cfg["ctx"] = 16384
+        services.claim_gpu("llama")
+        SERVER.start(cfg, m)
+    while SERVER.state == "starting":
+        if job.cancel_requested:
+            raise RuntimeError("annulé pendant le chargement du modèle")
+        time.sleep(1)
+    if SERVER.state != "ready":
+        raise RuntimeError("le modèle n'a pas démarré : " + (SERVER.status().get("error") or "voir l'onglet Journaux"))
+    return SERVER.base_url()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -212,6 +241,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(activite())
         if path == "/api/youtube":
             return self._json({"tools": youtube.status(), "history": youtube.history(), "lang": youtube.summary_lang(),
+                               "model": youtube.model_id(),
                                "llm": SERVER.status()["model"] if SERVER.state == "ready" else None})
         if path == "/api/youtube/thumb":
             data = youtube.thumb(q.get("id", ""))
@@ -487,20 +517,26 @@ class Handler(BaseHTTPRequestHandler):
             rec = youtube.load(vid)
             if rec and not b.get("again"):
                 return self._json({"item": youtube.public(rec)})
-            if SERVER.state != "ready":
-                return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
-            j = jobs.start("youtube", f"Résumé — {vid}", lambda job: youtube.run(job, b["url"], SERVER.base_url()),
-                           who=self._who())
-            return self._json({"job": j.to_dict()})
+            # même file que les générations d'image, de vidéo et de musique : une seule chose à la
+            # fois sur la carte graphique, dans l'ordre des demandes
+            j = jobs.start("youtube", f"Résumé YouTube — {vid}", lambda job: youtube.run(job, b["url"], _llm_for_youtube),
+                           queue="gen", who=self._who())
+            return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
+        if path == "/api/youtube/model":
+            if not models.find(b.get("id", "")):
+                return self._json({"error": "modèle introuvable"}, 400)
+            youtube.set_model(b["id"])
+            return self._json({"model": youtube.model_id()})
         if path == "/api/youtube/lang":
             youtube.set_summary_lang(b.get("lang", ""))
             return self._json({"lang": youtube.summary_lang()})
         if path == "/api/youtube/delete":
             return self._json({"deleted": youtube.delete(b.get("ids") or [])})
         if path == "/api/youtube/ask":
-            if SERVER.state != "ready":
-                return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
-            return self._json(youtube.ask_saved(b["id"], b["question"], SERVER.base_url()))
+            j = jobs.start("youtube", f"Question YouTube — {b['question'][:50]}",
+                           lambda job: youtube.ask_saved(b["id"], b["question"], _llm_for_youtube(job)),
+                           queue="gen", who=self._who())
+            return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/music/install":
             if jobs.running("music-install"):
                 return self._json({"error": "une installation est déjà en cours"}, 409)

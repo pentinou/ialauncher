@@ -214,5 +214,5 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .yt-ct b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.35}
 #yt-url{flex:1;min-width:240px}
 .mode{white-space:nowrap}.top{flex-wrap:wrap;gap:8px}
-#yt-model{max-width:100%}
+#yt-model{max-width:min(100%,460px)}
 @media (max-width:600px){.yt-gal{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}}
