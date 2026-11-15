@@ -191,19 +191,16 @@ def _original_lang(info):
 
 
 def _pick_track(info, orig):
-    """Choisit la piste de sous-titres : manuelle dans la langue de la vidéo, sinon
-    manuelle en français ou anglais, sinon automatique dans la langue d'origine
-    (jamais une traduction automatique). Renvoie (clé yt-dlp, « manuels »|« automatiques »)."""
+    """Sous-titres écrits par l'auteur, jamais ceux que YouTube génère (trop d'erreurs :
+    Whisper prendra le relais). Vidéo en français ou en anglais : ceux de sa langue. Autre
+    langue : la traduction française de l'auteur, sinon l'anglaise, sinon ceux de la langue
+    d'origine. Renvoie la clé yt-dlp de la piste, ou None."""
     manual = info.get("subtitles") or {}
-    auto = info.get("automatic_captions") or {}
     base = orig.split("-")[0]
-    for lang in [orig, base, "fr", "en"]:
+    for lang in ([base] if base in ("fr", "en") else ["fr", "en", base]):
         for k in manual:
-            if lang and (k == lang or k.split("-")[0] == lang):
-                return k, "manuels"
-    for k in [f"{orig}-orig", orig, base]:
-        if k in auto:
-            return k, "automatiques"
+            if lang and k.split("-")[0] == lang:
+                return k
     return None
 
 
@@ -220,7 +217,7 @@ def _parse_json3(data):
 
 
 def fetch(url):
-    """Métadonnées et texte prononcé d'une vidéo. `transcript` vaut [] sans sous-titres."""
+    """Métadonnées et sous-titres de l'auteur d'une vidéo. `transcript` vaut [] s'il n'y en a pas."""
     info = json.loads(_ytdlp(["-J", "--skip-download", url]))
     orig = _original_lang(info)
     meta = {k: info.get(k) for k in ("id", "title", "channel", "duration", "webpage_url")}
@@ -228,23 +225,21 @@ def fetch(url):
     meta["chapters"] = [{"start": c.get("start_time"), "title": c.get("title")} for c in info.get("chapters") or []]
     meta["subs"] = None
     transcript = []
-    track = _pick_track(info, orig)
-    if track:
-        key, kind = track
+    key = _pick_track(info, orig)
+    if key:
         # Le fichier passe par yt-dlp : l'URL brute des métadonnées répond vite 429.
         with tempfile.TemporaryDirectory() as tmp:
-            _ytdlp(["--skip-download", "--write-subs" if kind == "manuels" else "--write-auto-subs",
-                    "--sub-langs", key, "--sub-format", "json3", "-o", str(Path(tmp) / "v"), info["webpage_url"]])
+            _ytdlp(["--skip-download", "--write-subs", "--sub-langs", key, "--sub-format", "json3", "-o", str(Path(tmp) / "v"), info["webpage_url"]])
             f = Path(tmp) / f"v.{key}.json3"
             if f.is_file():
                 transcript = _parse_json3(json.loads(f.read_text(encoding="utf-8")))
-        meta["subs"] = {"lang": key.replace("-orig", ""), "kind": kind}
+        meta["subs"] = {"lang": key, "kind": "auteur"}
         meta["language"] = meta["language"] or meta["subs"]["lang"]
     return {"meta": meta, "transcript": transcript}
 
 
 SYSTEM = """Tu résumes des vidéos YouTube pour quelqu'un qui ne veut pas perdre de temps à les regarder.
-Tu reçois le titre, la transcription (sous-titres, souvent automatiques : fautes, noms propres écorchés), avec des repères [mm:ss] et, s'il y en a, les chapitres marqués « ## ».
+Tu reçois le titre, la transcription (sous-titres de l'auteur, ou transcription automatique : fautes et noms propres écorchés possibles), avec des repères [mm:ss] et, s'il y en a, les chapitres marqués « ## ».
 
 Règles :
 - Chaque point a une « phrase » qui donne l'information elle-même : la réponse, la conclusion, le conseil, le chiffre clé. Jamais le simple sujet. Une seule ligne : 25 mots au plus.
@@ -253,7 +248,7 @@ Règles :
 - Un seul point par défaut. Plusieurs points (5 au maximum) seulement si la vidéo traite de sujets indépendants (revue d'actualité, plusieurs nouvelles sans lien) : un point par sujet, dans l'ordre de la vidéo, sans mélanger deux sujets dans un même point. Un tutoriel, un test ou un comparatif reste un seul point, même s'il a des chapitres.
 - Ignore les sponsors, les demandes d'abonnement, les introductions et les anecdotes sans rapport.
 - N'invente rien qui ne soit pas dans la transcription. Si la vidéo ne donne pas vraiment de réponse, dis-le dans la phrase.
-- Réponds toujours en français, même si la vidéo est dans une autre langue ; garde les termes techniques usuels."""
+- Réponds toujours en {langue}, même si la vidéo est dans une autre langue ; garde les termes techniques usuels."""
 
 SCHEMA = {"type": "object", "required": ["points"], "properties": {"points": {
     "type": "array", "minItems": 1, "maxItems": 5, "items": {
@@ -278,6 +273,28 @@ def _prompt(data):
     return f"Titre : {meta['title']}\nChaîne : {meta.get('channel') or '?'}\n\nTranscription :{''.join(parts)}"
 
 
+# Langue des résumés et des réponses (réglage du launcher, commun à tous les navigateurs) :
+# le modèle traduit en résumant, quelle que soit la langue de la vidéo.
+LANGS = {"fr": "français", "en": "anglais", "es": "espagnol", "de": "allemand", "it": "italien", "pt": "portugais"}
+
+
+def summary_lang():
+    code = engine.load_config().get("youtube_lang", "fr")
+    return code if code in LANGS else "fr"
+
+
+def set_summary_lang(code):
+    if code not in LANGS:
+        raise ValueError(f"langue inconnue : {code}")
+    cfg = engine.load_config()
+    cfg["youtube_lang"] = code
+    engine.save_config(cfg)
+
+
+def _in_lang(prompt):
+    return prompt.replace("{langue}", LANGS[summary_lang()])
+
+
 def _chat(base_url, body, timeout):
     body = {"temperature": 0.3, "chat_template_kwargs": {"enable_thinking": False}, **body}
     req = urllib.request.Request(f"{base_url}/v1/chat/completions", data=json.dumps(body).encode(),
@@ -290,14 +307,14 @@ def _chat(base_url, body, timeout):
 def summarize(data, base_url, timeout=600):
     """Résumé par le llama-server de `base_url` : {"points": [{"phrase", "detail"}]}."""
     text, stats = _chat(base_url, {
-        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": _prompt(data)}],
+        "messages": [{"role": "system", "content": _in_lang(SYSTEM)}, {"role": "user", "content": _prompt(data)}],
         "response_format": {"type": "json_schema", "json_schema": {"name": "resume", "schema": SCHEMA}}}, timeout)
     return {**json.loads(text), **stats}
 
 
 SYSTEM_QUESTION = """Tu réponds aux questions d'une personne sur une vidéo YouTube qu'elle n'a pas regardée.
-Tu disposes de sa transcription (sous-titres, souvent automatiques : fautes, noms propres écorchés).
-Réponds en français, brièvement, en t'appuyant uniquement sur la transcription ; si la vidéo n'aborde pas la question, dis-le.
+Tu disposes de sa transcription (sous-titres de l'auteur, ou transcription automatique : fautes et noms propres écorchés possibles).
+Réponds en {langue}, brièvement, en t'appuyant uniquement sur la transcription ; si la vidéo n'aborde pas la question, dis-le.
 Quand c'est utile, indique le moment de la vidéo (mm:ss) où le passage se trouve.
 Écris en texte simple, sans Markdown (ni **, ni #) ; des tirets pour une liste si besoin."""
 
@@ -306,7 +323,7 @@ def ask(data, history, question, base_url, timeout=600):
     """Question libre sur la vidéo. `history` : [{"role": "user"|"assistant", "content"}] des
     échanges précédents. Le début du message (consignes + transcription) ne change pas d'une
     question à l'autre : llama-server le garde en cache et ne relit que la fin."""
-    messages = [{"role": "system", "content": SYSTEM_QUESTION + "\n\n" + _prompt(data)},
+    messages = [{"role": "system", "content": _in_lang(SYSTEM_QUESTION) + "\n\n" + _prompt(data)},
                 *history, {"role": "user", "content": question}]
     text, stats = _chat(base_url, {"messages": messages}, timeout)
     return {"answer": text, **stats}
@@ -417,14 +434,14 @@ def _drop_skipped(data):
     data["transcript"] = kept
 
 
-def run(job, url, base_url, whisper=False):
-    """Tâche « Résumer » : sous-titres (ou transcription par Whisper s'il n'y en a pas, ou si
-    `whisper` est demandé), puis résumé, enregistrés ensemble."""
+def run(job, url, base_url):
+    """Tâche « Résumer » : sous-titres de l'auteur, sinon transcription par Whisper, puis
+    résumé, enregistrés ensemble."""
     job.set(0.05, "lecture de la vidéo et de ses sous-titres…")
     data = fetch(url)
-    if whisper or not data["transcript"]:
+    if not data["transcript"]:
         if not status()["whisper"]:
-            raise RuntimeError("cette vidéo n'a pas de sous-titres : installez Whisper (bouton en haut de l'onglet) pour la transcrire")
+            raise RuntimeError("cette vidéo n'a pas de sous-titres écrits par son auteur : installez Whisper (bouton en haut de l'onglet) pour la transcrire")
         data["transcript"], lang = transcribe(job, data, 0.1, 0.6)
         data["meta"]["subs"] = {"lang": lang, "kind": "whisper"}
         data["meta"]["language"] = data["meta"]["language"] or lang
