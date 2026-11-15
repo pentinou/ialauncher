@@ -5,13 +5,18 @@ launcher) lit les métadonnées et la liste des sous-titres ; YouTube exige un
 moteur JavaScript pour ses défis, d'où Deno (binaire unique). Les deux vivent dans
 engines/youtube/ et se mettent à jour en les retéléchargeant.
 """
+import hashlib
 import json
 import platform
+import os
 import re
+import shutil
 import subprocess
+import tarfile
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -19,6 +24,17 @@ from . import paths, download, engine
 
 YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
 DENO_URL = "https://github.com/denoland/deno/releases/latest/download/deno-{}.zip"
+# Transcription des vidéos sans sous-titres : whisper.cpp (même famille ggml que llama.cpp),
+# compilé ici (pas de binaire Linux publié), modèle large-v3-turbo quantifié q5_0 (~1 Go de VRAM).
+WHISPER_API = "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest"
+WHISPER_SRC = "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/{}.tar.gz"
+WHISPER_MODEL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"
+# ffmpeg (audio YouTube → WAV 16 kHz) : celui du système s'il existe, sinon une version autonome.
+FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-{}"
+SPONSORBLOCK = "https://sponsor.ajay.app/api/skipSegments/{}?categories={}"
+# Plages retirées avant le résumé : sponsor, autopromotion, « abonnez-vous », intro, générique
+# de fin, aperçu de la suite, digression, musique hors sujet.
+SKIP = ["sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "filler", "music_offtopic"]
 
 
 def tools_dir():
@@ -44,8 +60,27 @@ def _deno_triple():
     return "aarch64-unknown-linux-gnu" if arm else "x86_64-unknown-linux-gnu"
 
 
+def whisper_dir():
+    return tools_dir() / "whisper"
+
+
+def whisper_cli():
+    return whisper_dir() / ("whisper-cli.exe" if sys.platform == "win32" else "whisper-cli")
+
+
+def whisper_model():
+    return whisper_dir() / WHISPER_MODEL.rsplit("/", 1)[1]
+
+
+def ffmpeg_bin():
+    own = tools_dir() / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+    return str(own) if own.is_file() else shutil.which("ffmpeg")
+
+
 def status():
-    return {"ytdlp": ytdlp_path().is_file(), "deno": deno_path().is_file()}
+    return {"ytdlp": ytdlp_path().is_file(), "deno": deno_path().is_file(),
+            "whisper": whisper_cli().is_file() and whisper_model().is_file() and bool(ffmpeg_bin()),
+            "nvcc": bool(engine.toolchain()["nvcc"])}
 
 
 def install(job):
@@ -63,6 +98,71 @@ def install(job):
     z.unlink(missing_ok=True)
     job.set(1.0, "yt-dlp et Deno installés")
     return status()
+
+
+def install_whisper(job):
+    """Compile whisper-cli (CUDA si nvcc est là), télécharge le modèle et, au besoin, ffmpeg."""
+    tc = engine.toolchain()
+    if not (tc["cmake"] and tc["cc"]):
+        raise RuntimeError("il faut cmake et un compilateur C++ (g++ ou clang++) pour compiler whisper.cpp")
+    job.set(0.02, "recherche de la dernière version de whisper.cpp…")
+    tag = download.fetch_json(WHISPER_API)["tag_name"]
+    src_dir = paths.cache_dir() / f"whisper.cpp-{tag.lstrip('v')}"
+    if not src_dir.exists():
+        tgz = paths.cache_dir() / f"whisper.cpp-{tag}.tar.gz"
+        download.download(WHISPER_SRC.format(tag), str(tgz), job, None, "sources")
+        with tarfile.open(tgz) as t:
+            t.extractall(paths.cache_dir())  # noqa: S202 — archive officielle
+        tgz.unlink(missing_ok=True)
+    if job.cancel_requested:
+        return None
+    env = dict(os.environ)
+    cfg = [tc["cmake"], "-S", str(src_dir), "-B", str(src_dir / "build"), "-DCMAKE_BUILD_TYPE=Release",
+           "-DBUILD_SHARED_LIBS=OFF", "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_SDL2=OFF"]
+    if tc["nvcc"]:
+        env["PATH"] = str(Path(tc["nvcc"]).parent) + os.pathsep + env.get("PATH", "")
+        cfg += ["-DGGML_CUDA=ON", "-DCMAKE_CUDA_ARCHITECTURES=native"]
+    job.set(0.05, "configuration cmake…")
+    engine._stream(cfg, env, job, 0.05, 0.08)
+    n = max(1, (os.cpu_count() or 2) - 1)
+    job.set(0.08, f"compilation de whisper.cpp{' (CUDA)' if tc['nvcc'] else ''} (-j{n})… plusieurs minutes")
+    engine._stream([tc["cmake"], "--build", str(src_dir / "build"), "--config", "Release", "-j", str(n),
+                    "--target", "whisper-cli"], env, job, 0.08, 0.6)
+    if job.cancel_requested:
+        return None
+    built = next((p for p in (src_dir / "build").rglob(whisper_cli().name) if p.is_file()), None)
+    if not built:
+        raise RuntimeError("compilation terminée mais whisper-cli introuvable")
+    whisper_dir().mkdir(parents=True, exist_ok=True)
+    shutil.copy2(built, whisper_cli())
+    shutil.rmtree(src_dir, ignore_errors=True)
+    if not whisper_model().is_file():
+        job.set(0.6, "modèle large-v3-turbo…")
+        download.download(WHISPER_MODEL, str(whisper_model()), job, None, "modèle Whisper")
+        if job.cancel_requested:
+            return None
+    if not ffmpeg_bin():
+        _install_ffmpeg(job)
+    job.set(1.0, f"Whisper installé ({tag}{', CUDA' if tc['nvcc'] else ', processeur seul'})")
+    return status()
+
+
+def _install_ffmpeg(job):
+    arm = platform.machine().lower() in ("arm64", "aarch64")
+    if sys.platform == "win32":
+        name = "win64-gpl.zip"
+    elif sys.platform.startswith("linux"):
+        name = "linuxarm64-gpl.tar.xz" if arm else "linux64-gpl.tar.xz"
+    else:
+        raise RuntimeError("ffmpeg introuvable : installez-le (macOS : brew install ffmpeg)")
+    arc = paths.cache_dir() / f"ffmpeg-{name}"
+    download.download(FFMPEG_URL.format(name), str(arc), job, None, "ffmpeg")
+    tmp = paths.cache_dir() / "ffmpeg-extrait"
+    engine._extract(str(arc), tmp)
+    exe = next(p for p in tmp.rglob("ffmpeg*") if p.is_file() and p.name in ("ffmpeg", "ffmpeg.exe"))
+    shutil.copy2(exe, tools_dir() / exe.name)
+    shutil.rmtree(tmp, ignore_errors=True)
+    arc.unlink(missing_ok=True)
 
 
 def _ytdlp(args, timeout=120):
@@ -255,14 +355,82 @@ def history():
     return sorted(out, key=lambda x: x["at"], reverse=True)
 
 
-def run(job, url, base_url):
-    """Tâche « Résumer » : sous-titres puis résumé, enregistrés ensemble."""
+def _skip_segments(vid):
+    """Plages [début, fin] à ignorer d'après SponsorBlock (saisies par la communauté). Seuls
+    les 4 premiers caractères du SHA-256 de l'identifiant partent : le serveur renvoie toutes
+    les vidéos de ce préfixe. [] si la vidéo n'a pas de données ou si l'API ne répond pas."""
+    prefix = hashlib.sha256(vid.encode()).hexdigest()[:4]
+    try:
+        d = download.fetch_json(SPONSORBLOCK.format(prefix, urllib.parse.quote(json.dumps(SKIP))), timeout=10)
+    except (OSError, ValueError):   # 404 = aucune donnée ; réseau ou API en panne : on s'en passe
+        return []
+    return sorted(s["segment"] for v in d if v.get("videoID") == vid for s in v.get("segments", []))
+
+
+def transcribe(job, data, p0, p1):
+    """Audio de la vidéo → WAV 16 kHz mono → whisper-cli. Renvoie ([[secondes, texte]], langue)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        job.set(p0, "téléchargement de l'audio…")
+        # piste d'origine si la vidéo est doublée automatiquement
+        _ytdlp(["-f", "ba[format_note*=original]/ba", "-o", str(Path(tmp) / "audio.%(ext)s"),
+                data["meta"]["webpage_url"]], timeout=900)
+        src = next(Path(tmp).glob("audio.*"))
+        wav = Path(tmp) / "audio.wav"
+        subprocess.run([ffmpeg_bin(), "-nostdin", "-loglevel", "error", "-i", str(src),
+                        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav)],
+                       check=True, capture_output=True, timeout=900)
+        lang = (data["meta"].get("language") or "auto").split("-")[0]
+        cmd = [str(whisper_cli()), "-m", str(whisper_model()), "-f", str(wav), "-l", lang,
+               "-oj", "-of", str(Path(tmp) / "out"), "-pp", "-np"]
+        job.logline("$ " + " ".join(cmd))
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                encoding="utf-8", errors="replace")
+        for line in proc.stderr:   # « whisper_print_progress_callback: progress =  42% »
+            m = re.search(r"progress\s*=\s*(\d+)%", line)
+            if m:
+                job.set(p0 + (p1 - p0) * int(m.group(1)) / 100, f"transcription par Whisper : {m.group(1)} %")
+            else:
+                job.logline(line)
+            if job.cancel_requested:
+                proc.terminate()
+                break
+        proc.wait()
+        if proc.returncode != 0 and not job.cancel_requested:
+            raise RuntimeError(f"whisper-cli a échoué (code {proc.returncode}) — voir le journal de la tâche")
+        out = json.loads((Path(tmp) / "out.json").read_text(encoding="utf-8", errors="replace"))
+    lines = [[round(seg["offsets"]["from"] / 1000, 1), seg["text"].strip()]
+             for seg in out.get("transcription", []) if seg["text"].strip()]
+    return lines, out.get("result", {}).get("language") or lang
+
+
+def _drop_skipped(data):
+    """Retire de la transcription les lignes qui commencent dans une plage SponsorBlock."""
+    segs = _skip_segments(data["meta"]["id"])
+    if not segs:
+        return
+    seconds, end = 0, 0   # durée de l'union des plages (elles se chevauchent souvent)
+    for a, b in segs:
+        seconds += max(0, b - max(a, end))
+        end = max(end, b)
+    kept = [x for x in data["transcript"] if not any(a <= x[0] < b for a, b in segs)]
+    data["meta"]["skipped"] = {"seconds": round(seconds), "lines": len(data["transcript"]) - len(kept)}
+    data["transcript"] = kept
+
+
+def run(job, url, base_url, whisper=False):
+    """Tâche « Résumer » : sous-titres (ou transcription par Whisper s'il n'y en a pas, ou si
+    `whisper` est demandé), puis résumé, enregistrés ensemble."""
     job.set(0.05, "lecture de la vidéo et de ses sous-titres…")
     data = fetch(url)
-    if not data["transcript"]:
-        raise RuntimeError("cette vidéo n'a pas de sous-titres exploitables (la transcription par Whisper n'est pas encore là)")
+    if whisper or not data["transcript"]:
+        if not status()["whisper"]:
+            raise RuntimeError("cette vidéo n'a pas de sous-titres : installez Whisper (bouton en haut de l'onglet) pour la transcrire")
+        data["transcript"], lang = transcribe(job, data, 0.1, 0.6)
+        data["meta"]["subs"] = {"lang": lang, "kind": "whisper"}
+        data["meta"]["language"] = data["meta"]["language"] or lang
+    _drop_skipped(data)
     words = sum(len(t.split()) for _, t in data["transcript"])
-    job.set(0.3, f"résumé par le modèle ({words} mots à lire)…")
+    job.set(max(job.progress, 0.6) if data["meta"]["subs"]["kind"] == "whisper" else 0.3, f"résumé par le modèle ({words} mots à lire)…")
     t0 = time.time()
     summary = summarize(data, base_url)
     rec = {**data, "summary": summary, "questions": [], "at": time.time(), "seconds": round(time.time() - t0)}

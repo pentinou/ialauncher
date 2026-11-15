@@ -205,3 +205,4 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .yt-hist{padding:8px 10px;border-radius:8px;cursor:pointer}.yt-hist:hover{background:var(--card2)}
 #yt-url{flex:1;min-width:240px}
 .mode{white-space:nowrap}.top{flex-wrap:wrap;gap:8px}
+#yt-model{max-width:100%}

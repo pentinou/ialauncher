@@ -467,6 +467,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "une installation est déjà en cours"}, 409)
             j = jobs.start("youtube-install", "Installation de yt-dlp et Deno", youtube.install)
             return self._json({"job": j.to_dict()})
+        if path == "/api/youtube/install-whisper":
+            if jobs.running("youtube-install"):
+                return self._json({"error": "une installation est déjà en cours"}, 409)
+            j = jobs.start("youtube-install", "Installation de Whisper (whisper.cpp)", youtube.install_whisper)
+            return self._json({"job": j.to_dict()})
         if path == "/api/youtube/run":
             vid = youtube.video_id(b.get("url", ""))
             if not vid:
@@ -476,7 +481,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"item": youtube.public(rec)})
             if SERVER.state != "ready":
                 return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
-            j = jobs.start("youtube", f"Résumé — {vid}", lambda job: youtube.run(job, b["url"], SERVER.base_url()),
+            j = jobs.start("youtube", f"Résumé — {vid}", lambda job: youtube.run(job, b["url"], SERVER.base_url(), bool(b.get("whisper"))),
                            who=self._who())
             return self._json({"job": j.to_dict()})
         if path == "/api/youtube/ask":
