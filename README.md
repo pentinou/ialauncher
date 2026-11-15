@@ -463,13 +463,24 @@ Beaucoup de vidéos durent 15 minutes pour une information qui tient en une lign
 
 ![Onglet YouTube : résumé déplié et une question](docs/youtube.png)
 
-**Comment.** [yt-dlp](https://github.com/yt-dlp/yt-dlp) lit les sous-titres de la vidéo :
-ceux de l'auteur, sinon ceux que YouTube génère dans la langue d'origine — jamais une
-traduction automatique, ni la piste d'un doublage automatique. YouTube impose un moteur
-JavaScript pour ses vérifications : [Deno](https://deno.com). Les deux (~100 Mo) s'installent
-d'un clic dans `engines/youtube/`. Le texte part ensuite au `llama-server` lancé dans l'onglet
-Texte, qui répond dans un format JSON imposé (grammaire), sans raisonnement (« thinking »).
-Le résumé est toujours en français, quelle que soit la langue de la vidéo.
+**Comment.** Le texte de la vidéo vient, dans l'ordre :
+
+1. des **sous-titres écrits par l'auteur** : ceux de la langue de la vidéo si elle est en
+   français ou en anglais ; pour une autre langue, sa traduction française, sinon anglaise,
+   sinon ses sous-titres d'origine ;
+2. sinon, de **Whisper**, qui transcrit l'audio (voir plus bas).
+
+Les sous-titres que YouTube génère lui-même ne sont **jamais** utilisés : chiffres, noms de
+produits et accents y sont trop souvent faux (« RTX 570 490 performance at 549 » là où
+Whisper entend « RTX 5070, 4090 performance at $549 »). [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+lit la vidéo ; YouTube impose un moteur JavaScript pour ses vérifications :
+[Deno](https://deno.com). Les deux (~100 Mo) s'installent d'un clic dans `engines/youtube/`.
+Le texte part ensuite au `llama-server` lancé dans l'onglet Texte, qui répond dans un format
+JSON imposé (grammaire), sans raisonnement (« thinking »). Résumés et réponses sont rédigés
+dans la langue choisie à côté du bouton « Résumer » (français par défaut ; anglais, espagnol,
+allemand, italien, portugais), quelle que soit celle de la vidéo : le modèle traduit en
+résumant (testé sur des vidéos anglaises et allemandes). Ce choix est un réglage du launcher
+(`youtube_lang` dans `config.json`), le même sur tous les appareils.
 
 **Sponsors retirés.** Avant le résumé, les passages repérés par la communauté
 [SponsorBlock](https://sponsor.ajay.app) (sponsor, autopromotion, « abonnez-vous », intro,
@@ -477,30 +488,29 @@ générique, digression) sont retirés du texte ; l'onglet affiche la durée ret
 4 premiers caractères du SHA-256 de l'identifiant de la vidéo sont envoyés à SponsorBlock.
 Sans données pour la vidéo, ou si le service ne répond pas, rien n'est retiré.
 
-**Vidéos sans sous-titres : Whisper.** Un clic installe
+**Whisper.** Indispensable en pratique : la plupart des vidéos n'ont pas de sous-titres
+écrits par leur auteur. Un clic installe
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) : compilé ici (CUDA si le CUDA Toolkit
 est présent, sinon pour le processeur ; ~5 à 10 min, il faut cmake et g++), modèle
 `large-v3-turbo` quantifié (575 Mo, ~1 Go de VRAM : il cohabite avec le modèle de texte), et
 ffmpeg s'il n'est pas déjà installé (version autonome, 160 Mo ; sous macOS : `brew install
-ffmpeg`). L'audio de la vidéo est alors transcrit, piste d'origine si la vidéo est doublée.
-Mesuré sur RTX 3090 : 35 min de vidéo transcrites en 70 s (+ ~30 s de téléchargement de
-l'audio). Whisper est aussi **plus fidèle que les sous-titres automatiques** (accent, chiffres,
-noms de produits : « RTX 5070, 4090 performance at $549 » là où YouTube écrit « RTX 570 490
-performance at 549 ») : « refaire avec Whisper » sous un résumé, ou la case « toujours
-transcrire avec Whisper ».
+ffmpeg`). L'audio de la vidéo est transcrit dans sa langue (piste d'origine si la vidéo est
+doublée). Mesuré sur RTX 3090 : 35 min de vidéo transcrites en 70 s (+ ~30 s de
+téléchargement de l'audio) ; une vidéo de 15 min est résumée en ~1 min de bout en bout.
 
 **Quel modèle.** L'onglet ne prend pas la carte graphique de lui-même : sans modèle lancé,
 il propose les modèles présents et un bouton **Lancer (contexte 16k)** (configuration conseillée
 par le launcher), ou bien on le règle dans l'onglet Texte. Un modèle de 20 à 30 milliards de paramètres, entièrement en VRAM, avec un
 contexte de **16k** couvre une vidéo de 30 min (≈ 9 000 jetons). Mesuré avec Qwen 3.8 27B
-(Q4_K_S, RTX 3090) : 10 à 30 s par résumé, plus ~10 s pour lire les sous-titres. Il corrige
-de lui-même les sous-titres automatiques abîmés (« RTX 570 » pour 5070). Les questions
+(Q4_K_S, RTX 3090) : 10 à 30 s par résumé. Les questions
 suivantes sur la même vidéo répondent en 2 à 5 s : `llama-server` garde la transcription en
 cache et ne relit que la question.
 
 **Historique.** Chaque vidéo est enregistrée dans `youtube/<id>.json` (métadonnées,
 transcription, résumé, questions) : la rouvrir est instantané. « refaire le résumé » relit
-les sous-titres et redemande au modèle lancé.
+la vidéo (sous-titres de l'auteur, sinon Whisper) et redemande au modèle lancé : c'est
+aussi le moyen de refaire une vidéo résumée avant cette règle à partir des sous-titres
+automatiques.
 
 **yt-dlp à jour.** YouTube casse régulièrement les anciennes versions (erreurs 403). Pour
 retélécharger la dernière version de yt-dlp et de Deno :
@@ -765,8 +775,8 @@ L'interface web n'utilise que ces routes (JSON), utilisables aussi en script :
 | GET/POST | `/api/civitai/search` (`type` : Checkpoint, LORA, Base), `/api/civitai/base-prefill?model=&version=`, `/api/civitai/token`, `/api/civitai/download` | Civitai (`base-prefill` : fiche d'un modèle de base d'après la doc de sd.cpp) |
 | GET | `/api/updates/engines`, `/api/updates/models?refresh=1`, `/api/updates/prefill?ref=&repo=&type=`, `/api/updates/user` | mises à jour : moteurs, nouvelles versions, fiche image / vidéo, choix validés |
 | POST | `/api/updates/accept`, `/api/updates/ignore`, `/api/updates/revert` | valider un remplacement, ignorer un dépôt, annuler |
-| GET | `/api/youtube`, `/api/youtube/item?id=` | YouTube : outils installés, modèle lancé, historique ; une vidéo résumée |
-| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/run`, `/api/youtube/ask` | installer yt-dlp et Deno ; installer Whisper ; résumer (`url`, `again` pour refaire, `whisper` pour transcrire l'audio ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
+| GET | `/api/youtube`, `/api/youtube/item?id=` | YouTube : outils installés, modèle lancé, langue des résumés, historique ; une vidéo résumée |
+| POST | `/api/youtube/install`, `/api/youtube/install-whisper`, `/api/youtube/lang`, `/api/youtube/run`, `/api/youtube/ask` | installer yt-dlp et Deno ; installer Whisper ; langue des résumés (`lang` : fr, en, es, de, it, pt) ; résumer (`url`, `again` pour refaire ; tâche, ou résultat enregistré) ; question (`id`, `question`) |
 | GET | `/outputs/<kind>/<fichier>` | fichiers générés (requêtes Range pour les lecteurs audio / vidéo) |
 
 ## Désinstallation

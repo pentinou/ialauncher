@@ -211,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/activity":
             return self._json(activite())
         if path == "/api/youtube":
-            return self._json({"tools": youtube.status(), "history": youtube.history(),
+            return self._json({"tools": youtube.status(), "history": youtube.history(), "lang": youtube.summary_lang(),
                                "llm": SERVER.status()["model"] if SERVER.state == "ready" else None})
         if path == "/api/youtube/item":
             rec = youtube.load(q.get("id", ""))
@@ -481,9 +481,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"item": youtube.public(rec)})
             if SERVER.state != "ready":
                 return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)
-            j = jobs.start("youtube", f"Résumé — {vid}", lambda job: youtube.run(job, b["url"], SERVER.base_url(), bool(b.get("whisper"))),
+            j = jobs.start("youtube", f"Résumé — {vid}", lambda job: youtube.run(job, b["url"], SERVER.base_url()),
                            who=self._who())
             return self._json({"job": j.to_dict()})
+        if path == "/api/youtube/lang":
+            youtube.set_summary_lang(b.get("lang", ""))
+            return self._json({"lang": youtube.summary_lang()})
         if path == "/api/youtube/ask":
             if SERVER.state != "ready":
                 return self._json({"error": "aucun modèle de texte n'est lancé : lancez-en un dans l'onglet Texte"}, 409)

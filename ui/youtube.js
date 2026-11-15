@@ -11,12 +11,14 @@ async function loadYoutube() {
   const root = $('mode-youtube');
   if (!root.dataset.ready) {
     root.innerHTML = `<section class="card"><h1>Résumer une vidéo YouTube</h1>
-      <p class="lead">Collez l'adresse d'une vidéo : le launcher lit ses sous-titres (ceux de l'auteur, sinon ceux générés par YouTube dans la langue d'origine) et le modèle de texte lancé en tire <b>l'essentiel en une phrase</b>, un point par sujet si la vidéo en aborde plusieurs. Cliquez une phrase pour l'explication détaillée ; posez vos propres questions en dessous.</p>
+      <p class="lead">Collez l'adresse d'une vidéo : le launcher lit les sous-titres écrits par son auteur (pour une vidéo ni française ni anglaise, sa traduction française ou anglaise s'il en a fait une), sinon il transcrit l'audio avec Whisper — jamais les sous-titres automatiques de YouTube, trop fautifs. Le modèle de texte lancé en tire <b>l'essentiel en une phrase</b>, un point par sujet si la vidéo en aborde plusieurs. Cliquez une phrase pour l'explication détaillée ; posez vos propres questions en dessous.</p>
       <div id="yt-tools"></div>
       <div class="row-inline">
         <input id="yt-url" placeholder="https://www.youtube.com/watch?v=…" size="50" onkeydown="if(event.key==='Enter')ytRun()">
         <button class="btn primary" id="yt-go" onclick="ytRun()">Résumer</button>
-        <label class="small hidden" id="yt-w" title="transcrit l’audio au lieu de lire les sous-titres : 1 à 2 min de plus pour 30 min de vidéo, mais bien plus fidèle quand les sous-titres automatiques sont mauvais (accent, jargon, chiffres)"><input type="checkbox" id="yt-whisper" onchange="LS.set('yt.whisper', this.checked)"> toujours transcrire avec Whisper</label>
+        <select id="yt-lang" onchange="ytLang(this.value)" title="langue des résumés et des réponses, quelle que soit celle de la vidéo (réglage du launcher, valable sur tous vos appareils)">
+          <option value="fr">en français</option><option value="en">in English</option><option value="es">en español</option>
+          <option value="de">auf Deutsch</option><option value="it">in italiano</option><option value="pt">em português</option></select>
       </div>
       <div id="yt-llm" class="small"></div>
       <div id="yt-job"></div></section>
@@ -32,13 +34,12 @@ async function loadYoutube() {
 async function ytRefresh() {
   try { Y.status = await api('/api/youtube'); } catch (e) { toast(e.message); return; }
   const t = Y.status.tools;
+  $('yt-lang').value = Y.status.lang;
   $('yt-tools').innerHTML = t.ytdlp && t.deno ? '' : `<div class="row-inline"><span>Il faut d'abord <b>yt-dlp</b> (lit YouTube) et <b>Deno</b> (moteur JavaScript que YouTube impose) : ~100 Mo, dans le dossier des moteurs.</span>
       <button class="btn" onclick="ytInstall()">Installer</button></div><div id="yt-install-job"></div>`;
-  if (t.ytdlp && t.deno && !t.whisper) $('yt-tools').innerHTML = `<details class="small"><summary>Vidéos sans sous-titres : installer <b>Whisper</b></summary>
-      <div class="row-inline"><span>whisper.cpp transcrit l'audio quand la vidéo n'a aucun sous-titre. Le launcher le compile ${t.nvcc ? 'pour votre carte NVIDIA (CUDA, ~5 à 10 min)' : 'pour le processeur (pas de CUDA Toolkit trouvé : transcription lente)'}, puis télécharge le modèle large-v3-turbo (575 Mo) et, s'il n'est pas déjà installé, ffmpeg (160 Mo).</span>
-      <button class="btn" onclick="ytInstall('install-whisper')">Installer</button></div></details><div id="yt-install-job"></div>`;
-  $('yt-w').classList.toggle('hidden', !t.whisper);
-  $('yt-whisper').checked = t.whisper && LS.get('yt.whisper', false);
+  if (t.ytdlp && t.deno && !t.whisper) $('yt-tools').innerHTML = `
+      <div class="row-inline"><span>Il faut aussi <b>Whisper</b> : la plupart des vidéos n'ont pas de sous-titres écrits par leur auteur, et whisper.cpp transcrit alors l'audio. Le launcher le compile ${t.nvcc ? 'pour votre carte NVIDIA (CUDA, ~5 à 10 min)' : 'pour le processeur (pas de CUDA Toolkit trouvé : transcription lente)'}, puis télécharge le modèle large-v3-turbo (575 Mo) et, s'il n'est pas déjà installé, ffmpeg (160 Mo).</span>
+      <button class="btn" onclick="ytInstall('install-whisper')">Installer</button></div><div id="yt-install-job"></div>`;
   $('yt-llm').innerHTML = Y.status.llm ? `<span class="muted">Modèle : ${esc(Y.status.llm.name)}</span>`
     : `<div class="warn-item">Aucun modèle de texte lancé.
         <select id="yt-model"></select> <button class="btn small" id="yt-launch" onclick="ytLaunch()">Lancer (contexte 16k)</button>
@@ -48,6 +49,11 @@ async function ytRefresh() {
   $('yt-history').innerHTML = h.length ? h.map(x => `<div class="yt-hist" onclick="ytOpen('${esc(x.id)}')">
       <div><b>${esc(x.title)}</b> <span class="muted small">${esc(x.channel || '')} · ${ytDuree(x.duration)}</span></div>
       <div class="small">${esc(x.phrase)}</div></div>`).join('') : '<span class="muted">aucune pour l’instant</span>';
+}
+
+async function ytLang(lang) {
+  try { await api('/api/youtube/lang', {lang}); toast('Prochains résumés et réponses : ' + $('yt-lang').selectedOptions[0].text); }
+  catch (e) { toast(e.message); }
 }
 
 async function ytModels() {
@@ -85,12 +91,12 @@ async function ytInstall(what = 'install') {
   } catch (e) { toast(e.message); }
 }
 
-async function ytRun(again, whisper) {
+async function ytRun(again) {
   const url = again ? Y.item.meta.webpage_url : $('yt-url').value.trim();
   if (!url) return;
   $('yt-go').disabled = true;
   try {
-    const d = await api('/api/youtube/run', {url, again: !!again, whisper: !!whisper || (!again && $('yt-whisper').checked)});
+    const d = await api('/api/youtube/run', {url, again: !!again});
     if (d.item) { ytShow(d.item); $('yt-go').disabled = false; return; }
     watchJob(d.job.id, 'yt-job', (j) => {
       $('yt-go').disabled = false;
@@ -108,14 +114,14 @@ function ytShow(item) {
   Y.item = item;
   LS.set('yt.last', item.meta.id);
   const m = item.meta, s = item.summary;
-  const subs = !m.subs ? '' : m.subs.kind === 'whisper' ? `transcrit par Whisper (${esc(m.subs.lang)})` : `sous-titres ${m.subs.kind} (${esc(m.subs.lang)})`;
+  const subs = !m.subs ? '' : m.subs.kind === 'whisper' ? `transcrit par Whisper (${esc(m.subs.lang)})`
+    : m.subs.kind === 'auteur' ? `sous-titres de l’auteur (${esc(m.subs.lang)})` : `sous-titres ${m.subs.kind} (${esc(m.subs.lang)})`;
   const skip = m.skipped ? ` · ${ytDuree(m.skipped.seconds)} de sponsor, intro… retirées (SponsorBlock)` : '';
   const box = $('yt-result');
   box.classList.remove('hidden');
   box.innerHTML = `<h1><a href="${esc(m.webpage_url)}" target="_blank" rel="noopener">${esc(m.title)}</a></h1>
     <p class="muted small">${esc(m.channel || '')} · ${ytDuree(m.duration)} · ${subs}${skip} · ${fmtN(item.words)} mots lus en ${item.seconds} s
-      <button class="link" onclick="ytRun(true)" title="relit les sous-titres et redemande un résumé au modèle lancé">refaire le résumé</button>
-      ${Y.status && Y.status.tools.whisper && m.subs && m.subs.kind !== 'whisper' ? ` · <button class="link" onclick="ytRun(true, true)" title="transcrit l’audio au lieu de lire les sous-titres : utile quand les sous-titres automatiques sont mauvais (accent, jargon)">refaire avec Whisper</button>` : ''}</p>
+      <button class="link" onclick="ytRun(true)" title="relit la vidéo (sous-titres de l’auteur, sinon Whisper) et redemande un résumé au modèle lancé">refaire le résumé</button></p>
     ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><p>${esc(p.detail)}</p></details>`).join('')}
     <h2>Une question sur la vidéo ?</h2>
     <div id="yt-chat" class="chat">${item.questions.map(ytMsgs).join('') || '<span class="muted small">Le modèle répond d’après ce qui est dit dans la vidéo, en citant le moment (mm:ss). La première question est la plus longue : il relit la transcription.</span>'}</div>
