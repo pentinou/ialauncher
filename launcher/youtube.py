@@ -364,9 +364,9 @@ def _tokens(base_url, messages):
         return len(json.loads(r.read())["tokens"]) + 50 * len(messages)
 
 
-def summarize(job, data, llm, base_url, timeout=900):
+def summarize(job, data, llm, base_url, timeout=900, system=SYSTEM):
     """Résumé par le llama-server : {"points": [{"phrase", "detail": [puces]}]}."""
-    messages = [{"role": "system", "content": _in_lang(SYSTEM)}, {"role": "user", "content": _prompt(data)}]
+    messages = [{"role": "system", "content": _in_lang(system)}, {"role": "user", "content": _prompt(data)}]
     # `llm(job, besoin)` relance le modèle avec plus de contexte si la transcription n'y tient pas
     base_url = llm(job, _tokens(base_url, messages) + 4096)   # + la réponse
     text, stats = _chat(base_url, {"messages": messages,
@@ -382,11 +382,11 @@ Si une ligne suffit, réponds en une ligne. Sinon, des puces courtes plutôt que
 Pas d'autre Markdown (ni **, ni #)."""
 
 
-def ask(job, data, history, question, llm, base_url, timeout=900):
+def ask(job, data, history, question, llm, base_url, timeout=900, system=SYSTEM_QUESTION):
     """Question libre sur la vidéo. `history` : [{"role": "user"|"assistant", "content"}] des
     échanges précédents. Le début du message (consignes + transcription) ne change pas d'une
     question à l'autre : llama-server le garde en cache et ne relit que la fin."""
-    messages = [{"role": "system", "content": _in_lang(SYSTEM_QUESTION) + "\n\n" + _prompt(data)},
+    messages = [{"role": "system", "content": _in_lang(system) + "\n\n" + _prompt(data)},
                 *history, {"role": "user", "content": question}]
     base_url = llm(job, _tokens(base_url, messages) + 2048)
     text, stats = _chat(base_url, {"messages": messages}, timeout)
@@ -473,12 +473,15 @@ def _skip_segments(vid):
 
 
 def transcribe(job, data, p0, p1):
-    """Audio de la vidéo → WAV 16 kHz mono → whisper-cli. Renvoie ([[secondes, texte]], langue)."""
+    """Audio de la vidéo (ou du podcast : meta["audio"]) → WAV 16 kHz mono → whisper-cli.
+    Renvoie ([[secondes, texte]], langue)."""
     with tempfile.TemporaryDirectory() as tmp:
         job.set(p0, "téléchargement de l'audio…")
-        # piste d'origine si la vidéo est doublée automatiquement
-        _ytdlp(["-f", "ba[format_note*=original]/ba", "-o", str(Path(tmp) / "audio.%(ext)s"),
-                data["meta"]["webpage_url"]], timeout=900)
+        if data["meta"].get("audio"):   # podcast : le fichier du flux RSS, directement
+            download.download(data["meta"]["audio"], str(Path(tmp) / "audio.src"))
+        else:   # piste d'origine si la vidéo est doublée automatiquement
+            _ytdlp(["-f", "ba[format_note*=original]/ba", "-o", str(Path(tmp) / "audio.%(ext)s"),
+                    data["meta"]["webpage_url"]], timeout=900)
         src = next(Path(tmp).glob("audio.*"))
         wav = Path(tmp) / "audio.wav"
         subprocess.run([ffmpeg_bin(), "-nostdin", "-loglevel", "error", "-i", str(src),

@@ -853,14 +853,20 @@ def outputs(kind, limit=60):
 
 def keep_output(kind, name, keep):
     """Marque (ou démarque) un fichier comme gardé : la galerie affiche alors son prompt et ses réglages."""
+    return flag_output(kind, name, "kept", keep)
+
+
+def flag_output(kind, name, flag, on):
+    """Pose ou retire une marque dans les réglages enregistrés d'un fichier : « kept » (gardé),
+    « adult » (contenu adulte : masqué quand la case Contenu adulte est décochée)."""
     p = _output_path(kind, name)
     if not p.is_file():
         raise RuntimeError("fichier introuvable")
     meta = _meta(p)
-    if keep:
-        meta["kept"] = True
+    if on:
+        meta[flag] = True
     else:
-        meta.pop("kept", None)
+        meta.pop(flag, None)
     p.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     return meta
 

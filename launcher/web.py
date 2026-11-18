@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
 from . import (hardware, engine, jobs, journal, models, catalog, estimate, recommend, presets, paths, agents,
-               sdcpp, music, gen_catalog, services, storage, civitai, updates, youtube)
+               sdcpp, music, gen_catalog, services, storage, civitai, updates, youtube, podcast)
 from .server import SERVER
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -182,6 +182,31 @@ def _llm_for_youtube(job, need=0):
     return SERVER.base_url()
 
 
+def _podcast_job(fid, eid, who=""):
+    """Tâche « résumé d'un épisode » dans la file des générations ; celle déjà en cours pour
+    le même épisode si elle existe (clic pendant un résumé automatique, double clic…)."""
+    j = next((x for x in jobs.running("podcast") if getattr(x, "episode", None) == eid), None)
+    if not j:
+        j = jobs.start("podcast", f"Résumé podcast — {eid}", lambda job: podcast.run(job, fid, eid, _llm_for_youtube),
+                       queue="gen", who=who)
+        j.episode = eid
+    return j
+
+
+PODCAST_CHECK = 3600   # vérification des podcasts suivis : au démarrage, puis toutes les heures
+
+
+def _suivre_podcasts():
+    while True:
+        try:
+            n = podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts"))
+            if n:
+                journal.log(f"podcasts suivis : {n} nouvel(s) épisode(s) à résumer")
+        except Exception:  # noqa: BLE001
+            journal.log(f"erreur du suivi des podcasts :\n{traceback.format_exc()}")
+        time.sleep(PODCAST_CHECK)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -274,6 +299,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/youtube/item":
             rec = youtube.load(q.get("id", ""))
             return self._json(youtube.public(rec) if rec else {"error": "vidéo inconnue"}, 200 if rec else 404)
+        if path == "/api/podcasts":
+            return self._json({"tools": youtube.status(), "feeds": [podcast._public_feed(f) for f in podcast.feeds()],
+                               "history": podcast.history(), "lang": youtube.summary_lang(), "model": youtube.model_id(),
+                               "llm": SERVER.status()["model"] if SERVER.state == "ready" else None,
+                               "running": {j.episode: j.id for j in jobs.running("podcast") if getattr(j, "episode", None)}})
+        if path == "/api/podcasts/episodes":
+            return self._json({"episodes": podcast.feed_episodes(q.get("feed", ""))})
+        if path == "/api/podcasts/item":
+            rec = podcast.load(q.get("id", ""))
+            return self._json(youtube.public(rec) if rec else {"error": "épisode inconnu"}, 200 if rec else 404)
+        if path == "/api/podcasts/thumb":
+            data = podcast.thumb(q.get("id", ""))
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=604800")
+            self.end_headers()
+            return self.wfile.write(data)
         if path == "/api/autounload":
             return self._json({"minutes": decharge_minutes()})
         if path == "/api/live":
@@ -505,6 +548,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if path == "/api/gen/outputs/keep":
             return self._json(sdcpp.keep_output(b["kind"], b["name"], bool(b.get("keep"))))
+        if path == "/api/gen/outputs/adult":
+            return self._json(sdcpp.flag_output(b["kind"], b["name"], "adult", bool(b.get("adult"))))
         if path == "/api/gen/outputs/delete":
             sdcpp.delete_output(b["kind"], b["name"])
             return self._json({"ok": True})
@@ -555,6 +600,28 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/youtube/ask":
             j = jobs.start("youtube", f"Question YouTube — {b['question'][:50]}",
                            lambda job: youtube.ask_saved(job, b["id"], b["question"], _llm_for_youtube),
+                           queue="gen", who=self._who())
+            return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
+        if path == "/api/podcasts/add":
+            return self._json(podcast.add(b.get("url", ""), bool(b.get("follow"))))
+        if path == "/api/podcasts/follow":
+            return self._json({"feed": podcast.set_follow(b["feed"], bool(b.get("follow")))})
+        if path == "/api/podcasts/remove":
+            podcast.remove(b["feed"])
+            return self._json({"ok": True})
+        if path == "/api/podcasts/check":   # le portier réveille le launcher pour ça (ondemand.py --podcasts)
+            return self._json({"started": podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts"))})
+        if path == "/api/podcasts/run":
+            rec = podcast.load(b.get("id", ""))
+            if rec and not b.get("again"):
+                return self._json({"item": youtube.public(rec)})
+            j = _podcast_job(b.get("feed", "") or (rec or {}).get("meta", {}).get("feed", ""), b["id"], self._who())
+            return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
+        if path == "/api/podcasts/delete":
+            return self._json({"deleted": podcast.delete(b.get("ids") or [])})
+        if path == "/api/podcasts/ask":
+            j = jobs.start("podcast-ask", f"Question podcast — {b['question'][:50]}",
+                           lambda job: podcast.ask_saved(job, b["id"], b["question"], _llm_for_youtube),
                            queue="gen", who=self._who())
             return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/music/install":
@@ -783,6 +850,7 @@ def serve(port=8765, open_browser=True, host="127.0.0.1"):
         print(f"⚠ écoute sur {host} : le launcher n'a PAS d'authentification ; limitez l'accès à ce port "
               "(pare-feu) au seul proxy qui en a une, ex. le SSO YunoHost", flush=True)
     threading.Thread(target=_decharger_si_inactif, daemon=True).start()
+    threading.Thread(target=_suivre_podcasts, daemon=True).start()
     if open_browser:
         threading.Timer(0.8, lambda: _open_browser(url)).start()
     import signal
