@@ -13,6 +13,8 @@ tout se règle dans son interface — pas de ComfyUI, pas de nœuds.
 
 L'onglet **YouTube** résume une vidéo avec le modèle de texte lancé : l'essentiel en une
 phrase (un point par sujet), l'explication en un clic, et vos propres questions sur la vidéo.
+L'onglet **Podcasts** fait de même pour les épisodes d'un podcast (flux RSS), et résume tout
+seul les nouveaux épisodes des podcasts suivis.
 
 Python 3.10+ **sans aucune dépendance** (bibliothèque standard uniquement). Interface web
 vanilla (HTML/JS/CSS), servie sur `127.0.0.1` ; accessible depuis d'autres appareils à
@@ -39,6 +41,7 @@ générale ; le code est indépendant.
 - [Utiliser le modèle depuis d'autres applications](#utiliser-le-modèle-depuis-dautres-applications)
 - [Image, vidéo, musique](#image-vidéo-musique)
 - [Résumé de vidéos YouTube](#résumé-de-vidéos-youtube)
+- [Résumé de podcasts](#résumé-de-podcasts)
 - [Espace disque](#espace-disque)
 - [Mises à jour des moteurs et des modèles](#mises-à-jour-des-moteurs-et-des-modèles)
 - [Configurations enregistrées (presets)](#configurations-enregistrées-presets)
@@ -132,7 +135,8 @@ Portail sur une autre machine : ajoutez son adresse, `--allow 192.168.1.10` (Lin
 `ondemand.py`) ou `-Autorisees 192.168.1.10` (WSL). Sous WSL, le script ouvre aussi le port
 dans le pare-feu et vérifie que WSL partage l'adresse du PC (`networkingMode=mirrored` dans
 `%UserProfile%\.wslconfig`, Windows 11 22H2+). Autres réglages : `--idle 0` (ne jamais
-arrêter), `--port`. Vérifier depuis le portail : `curl -I http://ADRESSE_DU_CALCUL:8765`
+arrêter), `--port`, `--podcasts 21600` (si un podcast est suivi, le portier réveille le launcher
+toutes les 6 h pour résumer ses nouveaux épisodes ; `0` = jamais). Vérifier depuis le portail : `curl -I http://ADRESSE_DU_CALCUL:8765`
 → `200` (`403` : adresse non autorisée ; pas de réponse : pare-feu ou mode réseau de WSL).
 
 ### 3. Le portail
@@ -423,7 +427,9 @@ Tout ce qui est généré est rangé dans `outputs/image`, `outputs/video` et
 résultat et de reprendre ses réglages (graine comprise). Le bouton « ☆ garder avec ses
 réglages » marque une image ou une vidéo réussie (`"kept": true` dans son `.json`) : la
 galerie l'affiche alors avec son prompt, son négatif et ses paramètres, et la conserve
-même quand elle n'est plus parmi les 60 dernières. Les PNG portent aussi les réglages
+même quand elle n'est plus parmi les 60 dernières. La coche 🔞 d'une vignette (au survol,
+toujours visible sur téléphone) marque un fichier comme contenu adulte (`"adult": true`) : il
+est masqué de la galerie tant que la case « Contenu adulte » de l'onglet est décochée. Les PNG portent aussi les réglages
 dans leurs métadonnées (bloc `parameters` écrit par stable-diffusion.cpp, au format A1111).
 
 **Tableau de variations X/Y/Z** (onglet Image, comme le « X/Y/Z plot » de la WebUI) : une
@@ -530,6 +536,27 @@ l'onglet **🔄 Mises à jour** compare yt-dlp, Deno et whisper.cpp aux dernièr
 publiées et les remplace d'un clic.
 
 Choix et pistes écartées : [docs/youtube.md](docs/youtube.md).
+
+## Résumé de podcasts
+
+**🎙 Podcasts** prend le **flux RSS** d'un podcast, son lien **Apple Podcasts** (le flux est
+demandé à l'API d'iTunes) ou l'adresse de sa page web (si elle annonce son flux), et liste ses
+derniers épisodes ; « Résumer » en donne le résumé, présenté comme dans l'onglet YouTube (même
+modèle, même langue, mêmes questions libres, même galerie). Spotify ne publie pas les flux de
+ses podcasts : passez par leur lien Apple Podcasts. L'audio de l'épisode est téléchargé
+directement depuis le flux puis transcrit par Whisper (les podcasts n'ont pas de sous-titres) ;
+les chapitres écrits dans la description (« 10:47 - … ») sont repris. Le prompt ajoute une
+consigne pour les épisodes longs : une puce par chapitre jusqu'aux conclusions, et la réponse à
+la question du titre (sans elle, un épisode de 1 h 46 n'était résumé que sur sa première
+demi-heure). Mesuré sur un épisode de 1 h 46 (Qwen 3.8 27B, RTX 3090) : ~6 min de bout en
+bout, dont 4 min 30 de Whisper et 20 s de résumé.
+
+**Suivre un podcast** (case « suivre » à l'ajout, ou « suivi » dans la liste) : les épisodes
+publiés ensuite sont résumés tout seuls, dans la file des générations. Le launcher vérifie les
+flux à son démarrage puis toutes les heures ; derrière le portier, qui l'éteint quand il ne sert
+pas, celui-ci le réveille toutes les 6 h (`--podcasts`) tant qu'un podcast est suivi. Au plus
+2 nouveaux épisodes par podcast et par vérification. Tout est rangé dans `podcasts/` :
+`feeds.json` (les podcasts), `<id>.json` par épisode résumé, et les pochettes réduites à 320 px.
 
 ## Espace disque
 

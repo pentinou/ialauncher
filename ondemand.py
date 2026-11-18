@@ -8,7 +8,10 @@ ouverte en envoie toutes les 3 s), aucune connexion en cours, aucune tâche
 (génération, téléchargement, compilation) et aucune requête que llama-server serait
 en train de traiter pour un agent (voir /api/activity).
 
-    python3 ondemand.py [--allow IP_DU_PORTAIL] [--listen 0.0.0.0] [--port 8765] [--idle 600]
+    python3 ondemand.py [--allow IP_DU_PORTAIL] [--listen 0.0.0.0] [--port 8765] [--idle 600] [--podcasts 21600]
+
+Podcasts suivis (onglet Podcasts) : le portier réveille le launcher toutes les --podcasts
+secondes pour qu'il cherche les nouveaux épisodes et les résume ; il se rendort ensuite.
 
 Pensé pour être joint par un portail qui, lui, demande une connexion (YunoHost, nginx
 avec mot de passe…) : comme le launcher, le portier n'a PAS d'authentification.
@@ -43,8 +46,10 @@ libérer le PC ; il redémarre à la demande. Cette page se recharge toute seule
 class Launcher:
     """Le processus IA Launcher, démarré à la demande et arrêté après inactivité."""
 
-    def __init__(self, idle):
+    def __init__(self, idle, podcasts=0):
         self.idle = idle
+        self.podcasts = podcasts
+        self.reveil = time.time()
         self.proc = None
         self.port = None
         self.pret = False
@@ -124,9 +129,27 @@ class Launcher:
             return True   # dans le doute, on n'arrête pas
         return a.get("occupe") or time.time() - a.get("derniere_requete", 0) < self.idle
 
+    def suivi_podcasts(self):
+        """Un podcast est-il suivi ? (fichier de l'onglet Podcasts, lu sans démarrer le launcher)"""
+        sys.path.insert(0, str(ICI))
+        from launcher import paths
+        try:
+            return any(f.get("follow") for f in json.loads((paths.home() / "podcasts" / "feeds.json").read_text()))
+        except (OSError, ValueError):
+            return False
+
     def surveiller(self):
         while True:
             time.sleep(30)
+            if self.podcasts and time.time() - self.reveil > self.podcasts:
+                self.reveil = time.time()
+                if not self.vivant() and self.suivi_podcasts():
+                    # au démarrage, le launcher vérifie les podcasts suivis et lance les résumés ;
+                    # ses tâches le gardent éveillé, puis l'arrêt après inactivité reprend
+                    print(f"[{time.strftime('%T')}] réveil pour les podcasts suivis", flush=True)
+                    self.demarrer()
+                    self.attendre()
+                    self.derniere = time.time()
             if (self.idle and self.vivant() and self.pret and self.connexions == 0
                     and time.time() - self.derniere > self.idle and not self.occupe()):
                 self.arreter(f"{self.idle} s sans activité")
@@ -215,10 +238,13 @@ def main():
     ap.add_argument("--allow", default="127.0.0.1",
                     help="adresses IP acceptées, séparées par des virgules (défaut 127.0.0.1 : cette machine "
                          "seulement ; « * » = toutes, sans aucune protection)")
+    ap.add_argument("--podcasts", type=int, default=21600,
+                    help="secondes entre deux réveils du launcher pour les podcasts suivis (défaut 21600 = 6 h ; "
+                         "0 = jamais ; seulement si un podcast est suivi)")
     a = ap.parse_args()
     autorisees = {x.strip() for x in a.allow.split(",") if x.strip() and x.strip() != "*"}
 
-    lanceur = Launcher(a.idle)
+    lanceur = Launcher(a.idle, a.podcasts if a.idle else 0)
     threading.Thread(target=lanceur.surveiller, daemon=True).start()
     httpd = ThreadingHTTPServer((a.listen, a.port), fabriquer_handler(lanceur, autorisees))
     httpd.daemon_threads = True

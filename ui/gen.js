@@ -20,11 +20,12 @@ G.nsfw = LS.get('nsfw', false);   // case « Contenu adulte » : vignettes et re
 function showMode(m) {
   G.mode = m;
   document.querySelectorAll('.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  ['text', 'image', 'video', 'music', 'youtube', 'storage', 'updates', 'logs'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
+  ['text', 'image', 'video', 'music', 'youtube', 'podcasts', 'storage', 'updates', 'logs'].forEach(x => $('mode-' + x).classList.toggle('hidden', x !== m));
   LS.set('mode', m);
   if (m === 'image' || m === 'video') loadVisual(m);
   if (m === 'music') loadMusic();
   if (m === 'youtube') loadYoutube();
+  if (m === 'podcasts') loadPodcasts();
   if (m === 'storage') loadStorage();
   if (m === 'updates') loadUpdates();
   if (m === 'logs') loadLogs();
@@ -44,7 +45,7 @@ function visualSkeleton(kind) {
     <p class="lead">Le « llama.cpp de l'image » : même bibliothèque (ggml), mêmes fichiers GGUF quantifiés, compilé pour votre carte. Il lit aussi vos checkpoints de Stable Diffusion WebUI / Forge, sans ComfyUI ni Python. Le launcher lance <code>sd-server</code> en arrière-plan et lui envoie vos réglages.</p>
     <div id="sd-engine-${kind}"></div></section>
   <section class="card adultbar"><label class="switch"><input type="checkbox" class="nsfw-box" ${G.nsfw ? 'checked' : ''} onchange="setNsfw(this.checked)"> 🔞 <b>Contenu adulte</b></label>
-    <span class="muted small">Décoché : images Civitai tout public seulement, dans les vignettes des modèles, checkpoints et LoRA comme dans les résultats de recherche. Coché : tout est montré. Vaut pour les onglets Image et Vidéo.</span></section>
+    <span class="muted small">Décoché : images Civitai tout public seulement, dans les vignettes des modèles, checkpoints et LoRA comme dans les résultats de recherche, et les fichiers de la galerie marqués 🔞 sont masqués. Coché : tout est montré. Vaut pour les onglets Image et Vidéo.</span></section>
   <section class="card"><h1><span class="num">1</span> Modèle</h1>
     <p class="lead">${isV ? 'Un modèle vidéo = un transformer de diffusion + un encodeur de texte + un VAE (qui décode les images latentes en pixels). Le launcher télécharge les trois.' : 'Tous ces modèles tournent dans le même moteur (stable-diffusion.cpp, ci-dessus).'} Choisissez un modèle, puis ses poids (checkpoint), puis d’éventuels LoRA. Il manque un modèle ? « Chercher sur Civitai », type « Modèles de base ».</p>
     <div id="gm-${kind}"></div></section>
@@ -458,6 +459,9 @@ function setNsfw(v) {
   for (const k of ['image', 'video']) {
     if ($('gm-' + k) && $('gm-' + k).innerHTML) renderModels(k);
     if (civState(k).items && civState(k).items.length) civSearch(k);   // relancer avec le nouveau filtre
+    if (G['out_' + k]) loadOutputs(k);
+    const shown = $('go-' + k) && (G['out_' + k] || []).find(f => f.name === $('go-' + k).dataset.name);
+    if (!v && shown && shown.meta.adult) { $('go-' + k).innerHTML = ''; $('go-' + k).dataset.name = ''; }
   }
 }
 async function civSearch(kind, more) {
@@ -840,6 +844,7 @@ async function confirmGpu(owner) {
 function showResult(kind, files) {
   const out = $('go-' + kind); if (!out || !files.length) return;
   out.innerHTML = files.map(f => mediaTag(kind, f.url, true)).join('') + resultInfo(kind, files[0]);
+  out.dataset.name = files[0].name;
 }
 function mediaTag(kind, url, big) {
   if (kind === 'video') return `<video src="${url}" controls ${big ? 'autoplay loop' : 'muted preload="metadata"'} class="${big ? 'resmedia' : ''}"></video>`;
@@ -864,20 +869,31 @@ async function loadOutputs(kind, again) {
   if (kind === 'image' && !again) sendPendingGrids(kind).then(sent => { if (sent) loadOutputs(kind, true); });
   renderOutDir(kind);
   const box = $('gg-' + kind); if (!box) return;
-  const items = G['out_' + kind];
+  let items = G['out_' + kind];
   if (kind === 'music') {
     box.innerHTML = items.length ? items.map(f => `<div class="track"><div><b>${esc((f.meta.prompt || '').slice(0, 80) || f.name)}</b> <span class="muted small">${esc(f.meta.model || '')} · ${f.meta.duration ? f.meta.duration + ' s' : ''} · graine ${f.meta.seed}</span></div>${mediaTag('music', f.url)}<div class="row-inline small"><button class="link" onclick='reuseMeta("music", ${esc(JSON.stringify(f.name))})'>reprendre</button> <a href="${f.url}" download>télécharger</a> <button class="link" onclick='deleteOutput("music", ${esc(JSON.stringify(f.name))})'>supprimer</button></div></div>`).join('') : '<p class="muted small">Rien encore.</p>';
     return;
   }
-  box.innerHTML = items.length ? items.map(f => {
+  const hidden = G.nsfw ? 0 : items.filter(f => f.meta.adult).length;
+  if (hidden) items = items.filter(f => !f.meta.adult);
+  box.innerHTML = (hidden ? `<p class="muted small" style="grid-column:1/-1">${hidden} fichier${hidden > 1 ? 's' : ''} marqué${hidden > 1 ? 's' : ''} 🔞 masqué${hidden > 1 ? 's' : ''} (case « Contenu adulte » décochée).</p>` : '') + (items.length ? items.map(f => {
     const n = esc(JSON.stringify(f.name)), m = f.meta;
-    const th = `<div class="gthumb" onclick='viewOutput("${kind}", ${n})' title="${esc(m.prompt || '')}">${kind === 'video' ? `<video src="${f.url}" muted preload="metadata"></video>` : `<img src="${f.url}" loading="lazy">`}${m.kept ? '<span class="gstar">★</span>' : ''}</div>`;
+    const th = `<div class="gthumb" onclick='viewOutput("${kind}", ${n})' title="${esc(m.prompt || '')}">${kind === 'video' ? `<video src="${f.url}" muted preload="metadata"></video>` : `<img src="${f.url}" loading="lazy">`}${m.kept ? '<span class="gstar">★</span>' : ''}
+      <label class="gadult ${m.adult ? 'on' : ''}" title="contenu adulte : masqué quand la case « Contenu adulte » est décochée" onclick="event.stopPropagation()"><input type="checkbox" ${m.adult ? 'checked' : ''} onchange='adultOutput("${kind}", ${n}, this.checked)'>🔞</label></div>`;
     if (!m.kept) return th;
     return `<div class="gkept">${th}<div class="gcap small"><div class="gprompt">${esc(m.prompt || '(sans prompt)')}</div>
       ${m.negative ? `<div class="muted"><b>négatif :</b> ${esc(m.negative)}</div>` : ''}
       <div class="muted">${esc(paramsLine(m))}</div>
       <div class="row-inline"><button class="link" onclick='reuseMeta("${kind}", ${n})'>reprendre</button><button class="link" onclick='keepOutput("${kind}", ${n}, false)'>ne plus garder</button></div></div></div>`;
-  }).join('') : '<p class="muted small">Rien encore.</p>';
+  }).join('') : '<p class="muted small">Rien encore.</p>');
+}
+async function adultOutput(kind, name, adult) {
+  try { await api('/api/gen/outputs/adult', {kind, name, adult}); } catch (e) { toast(e.message); }
+  if (adult && !G.nsfw) {
+    toast('Marqué 🔞 : masqué tant que la case « Contenu adulte » est décochée');
+    if ($('go-' + kind).dataset.name === name) { $('go-' + kind).innerHTML = ''; $('go-' + kind).dataset.name = ''; }
+  }
+  loadOutputs(kind);
 }
 function paramsLine(m) {
   const p = [m.model_name || m.model];
@@ -924,6 +940,7 @@ async function setOutDir(kind) {
 function viewOutput(kind, name) {
   const f = (G['out_' + kind] || []).find(x => x.name === name); if (!f) return;
   $('go-' + kind).innerHTML = mediaTag(kind, f.url, true) + resultInfo(kind, f);
+  $('go-' + kind).dataset.name = name;
   $('go-' + kind).scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
 function reuseMeta(kind, name) {
