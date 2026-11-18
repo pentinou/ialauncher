@@ -144,9 +144,13 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .gthumb{aspect-ratio:1;border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--card2)}
 .gthumb:hover{border-color:var(--acc)}.gthumb img,.gthumb video{width:100%;height:100%;object-fit:cover;display:block}
 .gthumb{position:relative}.gstar{position:absolute;top:4px;right:6px;color:#ffd24a;text-shadow:0 0 3px #000;font-size:16px}
-.gadult{position:absolute;bottom:4px;left:4px;display:none;align-items:center;gap:2px;padding:1px 5px;border-radius:6px;background:rgba(0,0,0,.65);color:#fff;font-size:13px;cursor:pointer}
-.gadult input{margin:0}.gthumb:hover .gadult,.gadult.on{display:flex}
-@media (hover:none){.gadult{display:flex}}
+.gbadge{position:absolute;bottom:4px;left:6px;font-size:14px;text-shadow:0 0 3px #000}
+.gmore{position:absolute;top:4px;left:4px;width:28px;height:24px;border:0;border-radius:6px;background:rgba(0,0,0,.65);color:#fff;font-size:16px;line-height:1;cursor:pointer;opacity:0}
+.gthumb:hover .gmore,.gmore:focus{opacity:1}.gmore:hover{background:rgba(0,0,0,.85)}
+@media (hover:none){.gmore{opacity:1}}
+.gmenu{position:absolute;top:32px;left:4px;z-index:2;display:flex;flex-direction:column;min-width:120px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--card);box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:default}
+.gmenu label,.gmenu button{display:flex;align-items:center;gap:6px;padding:6px 8px;border:0;border-radius:6px;background:none;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.gmenu label:hover,.gmenu button:hover{background:var(--card2)}.gmenu input{margin:0}.gmenu button:hover{color:var(--err)}
 .gkept{grid-column:span 3;display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:start;border:1px solid var(--line);border-radius:8px;padding:6px;background:var(--card2)}
 .gcap{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}.gprompt{max-height:9em;overflow:auto}
 @media (max-width:600px){.gkept{grid-column:1/-1}}
