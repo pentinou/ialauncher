@@ -137,6 +137,25 @@ function ytDetail(d) {
   return d.map(x => x.trim().startsWith('>') ? '  - ' + x.trim().slice(1).trim() : '- ' + x.trim().replace(/^[-•*]\s+/, '')).join('\n');
 }
 
+// Détail d'un point au format actuel : [{texte, qui, plus: [sous-puces]}]. « qui » (l'intervenant
+// dont c'est l'avis) en étiquette colorée, toujours de la même couleur pour un même nom ; les
+// sous-puces sont repliées sous leur puce. Les anciens résumés passent par ytDetail/ytText.
+function ytDetailHtml(d) {
+  if (!Array.isArray(d) || !d.length || typeof d[0] === 'string') return ytText(ytDetail(d));
+  return '<ul>' + d.map(x => {
+    const head = (x.qui ? ytWho(x.qui) + ' ' : '') + ytInline(x.texte);
+    const plus = (x.plus || []).filter(t => t.trim());
+    return plus.length ? `<li><details class="yt-sub"><summary>${head}</summary><ul>${plus.map(t => `<li>${ytInline(t)}</li>`).join('')}</ul></details></li>`
+      : `<li>${head}</li>`;
+  }).join('') + '</ul>';
+}
+function ytWho(name) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `<span class="yt-who" style="--h:${h}">${esc(name)}</span>`;
+}
+const ytInline = (t) => esc(String(t || '').trim()).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
 // Texte du modèle → HTML : lignes « - » en puces (deux espaces de retrait = sous-puce),
 // les autres en paragraphes, **…** en gras. Les anciens résumés rédigés en paragraphe s'affichent tels quels.
 function ytText(s) {
@@ -172,7 +191,7 @@ function ytShow(item) {
   box.innerHTML = `<h1><a href="${esc(m.webpage_url)}" target="_blank" rel="noopener">${esc(m.title)}</a></h1>
     <p class="muted small">${esc(m.channel || '')} · ${ytDuree(m.duration)} · ${subs}${skip} · ${fmtN(item.words)} mots lus en ${item.seconds} s
       <button class="link" onclick="ytRun(true)" title="redemande un résumé au modèle, sur la transcription déjà faite (rapide : pas de nouvelle transcription)">refaire le résumé</button></p>
-    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytText(ytDetail(p.detail))}</div></details>`).join('')}
+    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytDetailHtml(p.detail)}</div></details>`).join('')}
     <h2>Une question sur la vidéo ?</h2>
     <div id="yt-chat" class="chat">${item.questions.map(ytMsgs).join('') || '<span class="muted small">Le modèle répond d’après ce qui est dit dans la vidéo, en citant le moment (mm:ss). La première question est la plus longue : il relit la transcription.</span>'}</div>
     <div class="composer">

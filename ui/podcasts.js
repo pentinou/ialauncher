@@ -1,7 +1,7 @@
 /* IA Launcher — onglet Podcasts : épisodes transcrits par Whisper puis résumés comme les vidéos
    de l'onglet YouTube (même modèle, même langue, mêmes questions libres). Podcasts suivis :
    chaque nouvel épisode est résumé tout seul.
-   Réutilise app.js, gen.js et youtube.js ($, api, esc, toast, watchJob, LS, ytText, ytDetail, ytDuree, ytMinSec, ytMsgs). */
+   Réutilise app.js, gen.js et youtube.js ($, api, esc, toast, watchJob, LS, ytText, ytDetailHtml, ytDuree, ytMinSec, ytMsgs). */
 'use strict';
 
 const P = {status: null, item: null, asking: false, open: null, eps: {}};   // eps : derniers épisodes lus, par podcast
@@ -158,7 +158,7 @@ function pcShow(item) {
   box.innerHTML = `<h1><a href="${esc(m.webpage_url)}" target="_blank" rel="noopener">${esc(m.title)}</a></h1>
     <p class="muted small">${esc(m.channel || '')} · ${pcDate(m.date)} · ${ytDuree(m.duration)} · transcrit par Whisper (${esc((m.subs || {}).lang || '?')}) · ${fmtN(item.words)} mots lus en ${item.seconds} s
       <button class="link" onclick="pcRun('', '${m.id}', true)" title="redemande un résumé au modèle, sur la transcription déjà faite">refaire le résumé</button></p>
-    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytText(ytDetail(p.detail))}</div></details>`).join('')}
+    ${s.points.map(p => `<details class="yt-point"><summary>${esc(p.phrase)}</summary><div class="yt-det">${ytDetailHtml(p.detail)}</div></details>`).join('')}
     <h2>Une question sur l’épisode ?</h2>
     <div id="pc-chat" class="chat">${item.questions.map(ytMsgs).join('') || '<span class="muted small">Le modèle répond d’après ce qui est dit dans l’épisode, en citant le moment (mm:ss).</span>'}</div>
     <div class="composer">
