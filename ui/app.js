@@ -147,9 +147,19 @@ async function pollJobs() {
 function renderJob(j, logOpen) {
   const pct = Math.round(j.progress * 100);
   return `<div class="stat"><div class="stat-h"><span>${esc(j.label)}</span><span class="stat-v">${j.state === 'running' ? pct + ' %' : j.state}</span></div>
-    <div class="progress"><div style="width:${pct}%"></div></div><div class="stat-s">${esc(j.detail)} ${j.state === 'running' ? `<button class="link" onclick="cancelJob('${j.id}')">annuler</button>` : ''}</div>
+    ${jobAhead(j.ahead)}<div class="progress"><div style="width:${pct}%"></div></div><div class="stat-s">${esc(j.detail)} ${j.state === 'running' ? `<button class="link" onclick="cancelJob('${j.id}')">annuler</button>` : ''}</div>
     ${j.log.length ? `<details class="jlog" ${logOpen ? 'open' : ''}><summary class="small muted">journal</summary><div class="joblog">${esc(j.log.slice(-40).join('\n'))}</div></details>` : ''}
     ${j.state === 'error' ? `<div class="warn-item error">${esc(j.error)}</div>` : ''}</div>`;
+}
+// file d'attente (image, vidéo, musique, résumés : une tâche à la fois sur la carte graphique) :
+// ce qui passe avant celle-ci
+function jobAhead(a) {
+  if (!a || !a.length) return '';
+  // qui l'a demandée : l'appareil (« 192.168.1.20 (Android) » → « Android ») ou « suivi des podcasts »
+  const who = (w) => { const m = /\(([^)]*)\)$/.exec(w || ''); return m ? (m[1] === '?' ? '' : m[1]) : (w || ''); };
+  return `<div class="jqueue"><div class="small muted">Avant celle-ci : ${a.length} tâche${a.length > 1 ? 's' : ''}</div><ol>${a.map(x =>
+    `<li><span class="jq-l">${esc(x.label)}</span>${who(x.who) ? ` <span class="muted">· ${esc(who(x.who))}</span>` : ''}
+      <span class="jq-s">${x.active ? 'en cours · ' + Math.round(x.progress * 100) + ' %' : 'en attente'}</span></li>`).join('')}</ol></div>`;
 }
 async function cancelJob(id) { await api(`/api/jobs/${id}/cancel`, {}); }
 

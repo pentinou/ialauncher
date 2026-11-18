@@ -182,15 +182,21 @@ def _llm_for_youtube(job, need=0):
     return SERVER.base_url()
 
 
-def _podcast_job(fid, eid, who=""):
+def _podcast_job(fid, eid, who="", title=""):
     """Tâche « résumé d'un épisode » dans la file des générations ; celle déjà en cours pour
     le même épisode si elle existe (clic pendant un résumé automatique, double clic…)."""
     j = next((x for x in jobs.running("podcast") if getattr(x, "episode", None) == eid), None)
     if not j:
-        j = jobs.start("podcast", f"Résumé podcast — {eid}", lambda job: podcast.run(job, fid, eid, _llm_for_youtube),
+        j = jobs.start("podcast", f"Résumé podcast — {title or eid}", lambda job: podcast.run(job, fid, eid, _llm_for_youtube),
                        queue="gen", who=who)
         j.episode = eid
     return j
+
+
+def _titre_youtube(job, vid):
+    t = youtube.oembed_title(vid)
+    if t and job.label.endswith(vid):
+        job.label = f"Résumé YouTube — {t}"
 
 
 PODCAST_CHECK = 3600   # vérification des podcasts suivis : au démarrage, puis toutes les heures
@@ -199,7 +205,7 @@ PODCAST_CHECK = 3600   # vérification des podcasts suivis : au démarrage, puis
 def _suivre_podcasts():
     while True:
         try:
-            n = podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts"))
+            n = podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts", e["title"]))
             if n:
                 journal.log(f"podcasts suivis : {n} nouvel(s) épisode(s) à résumer")
         except Exception:  # noqa: BLE001
@@ -583,9 +589,16 @@ class Handler(BaseHTTPRequestHandler):
             if rec and not b.get("again"):
                 return self._json({"item": youtube.public(rec)})
             # même file que les générations d'image, de vidéo et de musique : une seule chose à la
-            # fois sur la carte graphique, dans l'ordre des demandes
-            j = jobs.start("youtube", f"Résumé YouTube — {vid}", lambda job: youtube.run(job, b["url"], _llm_for_youtube),
-                           queue="gen", who=self._who())
+            # fois sur la carte graphique, dans l'ordre des demandes ; la même vidéo demandée deux
+            # fois → la tâche déjà en file
+            j = next((x for x in jobs.running("youtube") if getattr(x, "video", None) == vid), None)
+            if not j:
+                title = (rec or {}).get("meta", {}).get("title", "")
+                j = jobs.start("youtube", f"Résumé YouTube — {title or vid}", lambda job: youtube.run(job, b["url"], _llm_for_youtube),
+                               queue="gen", who=self._who())
+                j.video = vid
+                if not title:   # titre lu en tâche de fond, pour la file d'attente
+                    threading.Thread(target=_titre_youtube, args=(j, vid), daemon=True).start()
             return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/youtube/model":
             if not models.find(b.get("id", "")):
@@ -610,12 +623,13 @@ class Handler(BaseHTTPRequestHandler):
             podcast.remove(b["feed"])
             return self._json({"ok": True})
         if path == "/api/podcasts/check":   # le portier réveille le launcher pour ça (ondemand.py --podcasts)
-            return self._json({"started": podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts"))})
+            return self._json({"started": podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts", e["title"]))})
         if path == "/api/podcasts/run":
             rec = podcast.load(b.get("id", ""))
             if rec and not b.get("again"):
                 return self._json({"item": youtube.public(rec)})
-            j = _podcast_job(b.get("feed", "") or (rec or {}).get("meta", {}).get("feed", ""), b["id"], self._who())
+            j = _podcast_job(b.get("feed", "") or (rec or {}).get("meta", {}).get("feed", ""), b["id"], self._who(),
+                             b.get("title") or (rec or {}).get("meta", {}).get("title", ""))
             return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/podcasts/delete":
             return self._json({"deleted": podcast.delete(b.get("ids") or [])})

@@ -43,8 +43,7 @@ async function pcRefresh() {
   const llm = s.llm, lang = {fr: 'en français', en: 'en anglais', es: 'en espagnol', de: 'en allemand', it: 'en italien', pt: 'en portugais'}[s.lang];
   $('pc-llm').innerHTML = `<span class="muted">Résumés ${lang}, par ${!llm || llm.id === s.model ? 'le modèle des résumés' : `<b>${esc(llm.name)}</b> (déjà lancé)`} : réglages communs avec l’onglet <button class="link" onclick="showMode('youtube')">YouTube</button>.</span>`;
   // suivi des résumés en cours (lancés ici, par un autre appareil ou par le suivi automatique)
-  const jid = Object.values(s.running)[0];
-  if (jid) pcWatch(jid);
+  Object.values(s.running).forEach(pcWatch);
   pcFeeds();
   const h = s.history;
   $('pc-count').textContent = h.length ? `(${h.length})` : '';
@@ -126,19 +125,22 @@ async function pcInstall() {
 
 async function pcRun(fid, eid, again) {
   try {
-    const d = await api('/api/podcasts/run', {feed: fid, id: eid, again: !!again});
+    const ep = (P.eps[fid] || []).find(x => x.id === eid);   // titre : pour la file d'attente
+    const d = await api('/api/podcasts/run', {feed: fid, id: eid, again: !!again, title: ep ? ep.title : ''});
     if (d.item) { pcShow(d.item); return; }
-    if (d.ahead) toast(`En file d’attente : ${d.ahead} tâche${d.ahead > 1 ? 's' : ''} avant celle-ci`, 5000);
     P.status.running[eid] = d.job.id;
     if (P.open) pcEpisodes(P.open);
     pcWatch(d.job.id);
   } catch (e) { toast(e.message, 8000); }
 }
 
+// un bloc de suivi par résumé (lancé ici, par un autre appareil ou par le suivi automatique)
 function pcWatch(id) {
-  if (Object.values(JOBS).some(x => x.boxId === 'pc-job')) return;   // un suivi à la fois ; les autres attendent leur tour
-  watchJob(id, 'pc-job', (j) => {
-    if (j.state === 'done') { $('pc-job').innerHTML = ''; pcShow(j.result); }
+  const box = 'pc-job-' + id;
+  if ($(box)) return;
+  $('pc-job').insertAdjacentHTML('beforeend', `<div id="${box}"></div>`);
+  watchJob(id, box, (j) => {
+    if (j.state === 'done') { $(box).remove(); if (!P.asking) pcShow(j.result); }
     pcRefresh();
   });
 }

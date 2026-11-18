@@ -296,7 +296,9 @@ pendant ce délai retrouvera `llama-server` arrêté : relancez-le ou choisissez
 **Plusieurs navigateurs en même temps.** Les générations (image, vidéo, musique) passent
 une à la fois, dans l'ordre des demandes : celle demandée pendant qu'une autre tourne
 (autre onglet, téléphone, autre personne) attend son tour, avec « en attente : N tâches
-avant celle-ci » ; elle peut être annulée avant de démarrer. Après un rechargement de
+avant celle-ci » et, au-dessus de sa barre de progression, la liste de ces tâches (celle en
+cours et son avancement, puis celles en attente, avec l'appareil qui les a demandées) ; elle
+peut être annulée avant de démarrer. Après un rechargement de
 page, chaque navigateur ne reprend que les générations qu'il a lancées.
 
 ### Image et vidéo : stable-diffusion.cpp
@@ -518,8 +520,10 @@ c'est lui qui sert, à condition que la transcription tienne dans son contexte ;
 relancé avec le modèle des résumés à 64k. Résumés et questions passent dans **la même file d'attente que les
 générations** d'image, de vidéo et de musique : demandés pendant une génération, ils attendent
 qu'elle finisse (« en attente : N tâches avant celle-ci »), puis libèrent la carte graphique
-pour le modèle de texte. La barre de progression donne le titre de la vidéo en cours dès qu'il est
-connu. Le contexte de **64k** couvre environ 4 h de parole (2 h 18 de débat = 36 600 jetons).
+pour le modèle de texte. Le bouton « Résumer » reste actif : collez une autre adresse pendant
+un résumé, elle se met en file derrière (chaque demande a son bloc de suivi ; la même vidéo
+demandée deux fois ne fait qu'un résumé). La barre de progression donne le titre de la vidéo dès
+qu'il est connu (lu tout de suite auprès de YouTube, pour la file d'attente). Le contexte de **64k** couvre environ 4 h de parole (2 h 18 de débat = 36 600 jetons).
 Mesuré avec Qwen 3.8 27B (Q4_K_S, RTX 3090) : 64k tiennent en VRAM (18,2 Go, 23,9 Go avec
 Whisper sur une carte de 24 Go) ; 10 à 30 s par résumé d'une vidéo de 30 min, 44 s pour 2 h 18
 (lecture de la transcription à ~1 300 jetons/s). Si le résumé échoue, la transcription reste
