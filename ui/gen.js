@@ -879,7 +879,11 @@ async function loadOutputs(kind, again) {
   box.innerHTML = (hidden ? `<p class="muted small" style="grid-column:1/-1">${hidden} fichier${hidden > 1 ? 's' : ''} marqué${hidden > 1 ? 's' : ''} 🔞 masqué${hidden > 1 ? 's' : ''} (case « Contenu adulte » décochée).</p>` : '') + (items.length ? items.map(f => {
     const n = esc(JSON.stringify(f.name)), m = f.meta;
     const th = `<div class="gthumb" onclick='viewOutput("${kind}", ${n})' title="${esc(m.prompt || '')}">${kind === 'video' ? `<video src="${f.url}" muted preload="metadata"></video>` : `<img src="${f.url}" loading="lazy">`}${m.kept ? '<span class="gstar">★</span>' : ''}
-      <label class="gadult ${m.adult ? 'on' : ''}" title="contenu adulte : masqué quand la case « Contenu adulte » est décochée" onclick="event.stopPropagation()"><input type="checkbox" ${m.adult ? 'checked' : ''} onchange='adultOutput("${kind}", ${n}, this.checked)'>🔞</label></div>`;
+      ${m.adult ? '<span class="gbadge" title="marqué contenu adulte">🔞</span>' : ''}
+      <button class="gmore" title="options" onclick="event.stopPropagation(); gMenu(this)">⋯</button>
+      <div class="gmenu hidden" onclick="event.stopPropagation()">
+        <label title="contenu adulte : masqué quand la case « Contenu adulte » est décochée"><input type="checkbox" ${m.adult ? 'checked' : ''} onchange='adultOutput("${kind}", ${n}, this.checked)'> 🔞 18+</label>
+        <button onclick='deleteOutput("${kind}", ${n})'>🗑 Supprimer</button></div></div>`;
     if (!m.kept) return th;
     return `<div class="gkept">${th}<div class="gcap small"><div class="gprompt">${esc(m.prompt || '(sans prompt)')}</div>
       ${m.negative ? `<div class="muted"><b>négatif :</b> ${esc(m.negative)}</div>` : ''}
@@ -887,6 +891,13 @@ async function loadOutputs(kind, again) {
       <div class="row-inline"><button class="link" onclick='reuseMeta("${kind}", ${n})'>reprendre</button><button class="link" onclick='keepOutput("${kind}", ${n}, false)'>ne plus garder</button></div></div></div>`;
   }).join('') : '<p class="muted small">Rien encore.</p>');
 }
+// menu « ⋯ » d'une vignette : un seul ouvert à la fois, fermé par un clic ailleurs
+function gMenu(btn) {
+  const menu = btn.nextElementSibling, open = menu.classList.contains('hidden');
+  document.querySelectorAll('.gmenu').forEach(x => x.classList.add('hidden'));
+  menu.classList.toggle('hidden', !open);
+}
+document.addEventListener('click', () => document.querySelectorAll('.gmenu').forEach(x => x.classList.add('hidden')));
 async function adultOutput(kind, name, adult) {
   try { await api('/api/gen/outputs/adult', {kind, name, adult}); } catch (e) { toast(e.message); }
   if (adult && !G.nsfw) {
@@ -972,7 +983,8 @@ async function toInput(url) {
 async function deleteOutput(kind, name) {
   if (!confirm('Supprimer ce fichier ?')) return;
   await api('/api/gen/outputs/delete', {kind, name}); loadOutputs(kind);
-  $('go-' + kind).innerHTML = '';
+  const out = $('go-' + kind);   // supprimé depuis la galerie : ne vider le résultat que s'il montrait ce fichier
+  if (!out.dataset.name || out.dataset.name === name) { out.innerHTML = ''; out.dataset.name = ''; }
 }
 
 // ------------------------------------------------------------------ musique

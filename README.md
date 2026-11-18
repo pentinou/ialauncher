@@ -427,9 +427,9 @@ Tout ce qui est généré est rangé dans `outputs/image`, `outputs/video` et
 résultat et de reprendre ses réglages (graine comprise). Le bouton « ☆ garder avec ses
 réglages » marque une image ou une vidéo réussie (`"kept": true` dans son `.json`) : la
 galerie l'affiche alors avec son prompt, son négatif et ses paramètres, et la conserve
-même quand elle n'est plus parmi les 60 dernières. La coche 🔞 d'une vignette (au survol,
-toujours visible sur téléphone) marque un fichier comme contenu adulte (`"adult": true`) : il
-est masqué de la galerie tant que la case « Contenu adulte » de l'onglet est décochée. Les PNG portent aussi les réglages
+même quand elle n'est plus parmi les 60 dernières. Le menu « ⋯ » d'une vignette (au survol,
+toujours visible sur téléphone) supprime le fichier ou le marque 🔞 18+ (`"adult": true`) : il
+est alors masqué de la galerie tant que la case « Contenu adulte » de l'onglet est décochée. Les PNG portent aussi les réglages
 dans leurs métadonnées (bloc `parameters` écrit par stable-diffusion.cpp, au format A1111).
 
 **Tableau de variations X/Y/Z** (onglet Image, comme le « X/Y/Z plot » de la WebUI) : une
