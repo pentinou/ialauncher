@@ -273,19 +273,25 @@ Règles :
   « nouvelles sans lien » : la vidéo enchaîne des nouvelles indépendantes, dont chacune pourrait faire une vidéo à part (revue d'actualité, « les infos de la semaine »). → « sujets » : la liste de ces nouvelles en quelques mots chacune, dans l'ordre de la vidéo ; puis exactement un point par sujet, dans le même ordre (les 5 plus importants s'il y en a plus), sans jamais regrouper deux nouvelles dans un point.
 - Chaque point a une « phrase » qui donne l'information elle-même : la réponse, la conclusion, le conseil, le chiffre clé. Jamais le simple sujet. Une seule ligne : 25 mots au plus.
   Mauvais : « La vidéo parle de pâte à pizza. » Bon : « Une pâte laissée 48 h au frigo a plus de goût qu'une pâte levée 2 h à température ambiante. »
-- « detail » : l'explication en liste de puces (un élément du tableau par puce), pas en paragraphe rédigé : 3 à 8 puces courtes, une idée chacune, avec le pourquoi, le comment, les chiffres, noms et exemples importants de la vidéo.
-  Un raisonnement en plusieurs étapes s'écrit avec des flèches (« prix de l'énergie en hausse → production plus chère → hausse des prix ») ou en sous-puces : un élément qui commence par « > » est une sous-puce de la puce précédente.
+- « detail » : l'explication en liste de puces, pas en paragraphe rédigé : 3 à 8 puces, une idée chacune. Chaque puce a :
+  « texte » : l'idée en une ligne courte, avec le pourquoi ou le comment.
+  « qui » : le prénom ou le nom de la personne dont c'est l'avis, l'analyse, la prédiction ou le conseil ; "" pour un fait rapporté, une donnée ou une description neutre.
+  « plus » : 1 à 4 sous-puces qui creusent la puce pour qui veut en savoir plus (chiffres, exemples, arguments, nuances, objections) ; [] seulement si la vidéo n'en dit pas davantage.
+  Un raisonnement en plusieurs étapes s'écrit avec des flèches (« prix de l'énergie en hausse → production plus chère → hausse des prix »).
 - Ignore les sponsors, les demandes d'abonnement, les introductions et les anecdotes sans rapport.
-- Dans un débat, une interview ou une vidéo d'opinion, attribue les affirmations à qui les défend (« selon X… », « X soutient que… ») au lieu de les présenter comme des faits établis.
+- Dans un débat, une interview, un podcast ou une vidéo d'opinion, attribue chaque avis à qui le défend avec « qui » au lieu de le présenter comme un fait établi. Reconnais les intervenants à leurs prénoms dans la transcription (présentations, « qu'en penses-tu, Tim ? », interventions annoncées). La transcription ne dit pas qui parle à chaque ligne : n'attribue un avis à quelqu'un que si c'est clair ; un avis dont on ne sait pas lequel des intervenants le donne : « les intervenants » (ne choisis jamais un intervenant au hasard). Vidéo à une seule voix : "" partout (tout vient de l'auteur), sauf pour l'avis d'une autre personne qu'il cite. Quand les intervenants ne sont pas d'accord, une puce par avis : « qui » nomme une seule personne, ou plusieurs seulement si elles défendent le même avis ; jamais deux camps opposés dans la même puce.
 - N'invente rien qui ne soit pas dans la transcription. Si la vidéo ne donne pas vraiment de réponse, dis-le dans la phrase.
 - Réponds toujours en {langue}, même si la vidéo est dans une autre langue ; garde les termes techniques usuels."""
 
 # Le genre d'abord, puis (revue d'actualité) la liste des sujets : le modèle décide avant de
 # rédiger. Laissé libre, il regroupait les nouvelles d'une revue de 1 h en 2 points ; avec une
 # liste de sujets seule, il découpait au contraire un test ou un classement en 5 aspects.
+_PUCE = {"type": "object", "required": ["texte", "qui", "plus"], "properties": {
+    "texte": {"type": "string"}, "qui": {"type": "string"},
+    "plus": {"type": "array", "maxItems": 4, "items": {"type": "string"}}}}
 _POINT = {"type": "object", "required": ["phrase", "detail"], "properties": {
     "phrase": {"type": "string"},
-    "detail": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}}}}
+    "detail": {"type": "array", "minItems": 1, "maxItems": 10, "items": _PUCE}}}
 SCHEMA = {"anyOf": [
     {"type": "object", "required": ["genre", "points"], "properties": {
         "genre": {"const": "un seul thème"},
@@ -368,7 +374,7 @@ def summarize(job, data, llm, base_url, timeout=900, system=SYSTEM):
     """Résumé par le llama-server : {"points": [{"phrase", "detail": [puces]}]}."""
     messages = [{"role": "system", "content": _in_lang(system)}, {"role": "user", "content": _prompt(data)}]
     # `llm(job, besoin)` relance le modèle avec plus de contexte si la transcription n'y tient pas
-    base_url = llm(job, _tokens(base_url, messages) + 4096)   # + la réponse
+    base_url = llm(job, _tokens(base_url, messages) + 8192)   # + la réponse (sous-puces comprises)
     text, stats = _chat(base_url, {"messages": messages,
         "response_format": {"type": "json_schema", "json_schema": {"name": "resume", "schema": SCHEMA}}}, timeout)
     return {**json.loads(text), **stats}
@@ -377,7 +383,7 @@ def summarize(job, data, llm, base_url, timeout=900, system=SYSTEM):
 SYSTEM_QUESTION = """Tu réponds aux questions d'une personne sur une vidéo YouTube qu'elle n'a pas regardée.
 Tu disposes de sa transcription (sous-titres de l'auteur, ou transcription automatique : fautes et noms propres écorchés possibles).
 Réponds en {langue}, brièvement, en t'appuyant uniquement sur la transcription ; si la vidéo n'aborde pas la question, dis-le.
-Quand c'est utile, indique le moment de la vidéo (mm:ss) où le passage se trouve.
+Quand c'est utile, indique le moment de la vidéo (mm:ss) où le passage se trouve. Un avis est toujours attribué à qui le défend (« selon Tim… »).
 Si une ligne suffit, réponds en une ligne. Sinon, des puces courtes plutôt que des paragraphes rédigés : chaque ligne commence par « - » ; pour un raisonnement en plusieurs étapes, des flèches (« A → B → C ») ou des sous-puces (deux espaces puis « - »).
 Pas d'autre Markdown (ni **, ni #)."""
 

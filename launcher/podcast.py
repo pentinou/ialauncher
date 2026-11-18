@@ -34,7 +34,10 @@ SYSTEM = youtube.SYSTEM.replace(_FIRST, "Tu résumes des épisodes de podcast po
                                 "à les écouter. Les consignes disent « vidéo » : c'est ici l'épisode.").replace(
     _IGNORE, "\n- Un épisode de podcast est long : le « detail » suit l'ordre de l'épisode, avec au moins une puce par "
     "chapitre marqué « ## » (sauf introduction et générique), jusqu'aux conclusions. Si le titre de l'épisode pose une "
-    "question, la « phrase » donne la réponse qu'apportent les intervenants." + _IGNORE)
+    "question, la « phrase » donne la réponse qu'apportent les intervenants.\n- Qui parle : la transcription "
+    "d'un podcast ne le dit jamais, et ses animateurs habituels ne se distinguent pas à la lecture. Leurs avis : « qui » = "
+    "« les animateurs », sauf si la phrase de la transcription nomme elle-même la personne (« Tim pense que… »). Un "
+    "invité présenté nommément peut être nommé pour ses propres avis." + _IGNORE)
 SYSTEM_QUESTION = youtube.SYSTEM_QUESTION.replace(_FIRST_Q, "Tu réponds aux questions d'une personne sur un épisode de "
                                                   "podcast qu'elle n'a pas écouté. Les consignes disent « vidéo » : c'est ici l'épisode.")
 

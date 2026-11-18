@@ -463,8 +463,13 @@ Beaucoup de vidéos durent 15 minutes pour une information qui tient en une lign
 - **l'essentiel en une phrase** : la réponse, la conclusion ou le conseil, pas le sujet.
   Une revue d'actualité (des nouvelles sans lien entre elles) donne un point par nouvelle,
   5 au plus ; un test, un classement, une interview ou un débat reste un seul point, même long ;
-- **l'explication** en puces courtes (chiffres et noms compris ; flèches ou sous-puces pour un
-  raisonnement en plusieurs étapes) en cliquant sur la phrase ;
+- **l'explication** en puces courtes (chiffres et noms compris ; flèches pour un raisonnement
+  en plusieurs étapes) en cliquant sur la phrase ; chaque puce se déplie (▸) en 1 à 4
+  sous-puces qui la creusent, préparées avec le résumé (rien à attendre). Un avis porte
+  l'étiquette colorée de qui le défend (une couleur par personne), un fait n'en a pas ; Whisper
+  ne disant pas qui parle, un intervenant n'est nommé que s'il est reconnaissable (débat aux
+  camps nommés, invité d'une interview) ; les animateurs habituels d'un podcast restent
+  « les animateurs » ;
 - **une fenêtre de questions** : le modèle répond d'après ce qui est dit dans la vidéo, en
   citant le moment (mm:ss), et dit quand la vidéo n'aborde pas la question.
 
