@@ -408,6 +408,17 @@ def video_id(url):
     return m.group(1) if m else None
 
 
+def oembed_title(vid):
+    """Titre d'une vidéo par l'oEmbed de YouTube (une requête légère, sans yt-dlp) ; "" si
+    YouTube ne répond pas. Sert à nommer une demande de résumé qui attend son tour."""
+    url = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(f"https://www.youtube.com/watch?v={vid}")
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8")).get("title", "")
+    except Exception:  # noqa: BLE001 — le nom reste l'identifiant
+        return ""
+
+
 def _file(vid, ext="json"):
     # l'identifiant arrive de l'URL : 11 caractères YouTube, rien d'autre (pas de « ../ »)
     if not re.fullmatch(r"[\w-]{11}", vid or ""):

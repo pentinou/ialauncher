@@ -28,6 +28,7 @@ class Job:
         self.cancel_requested = False
         self.queue = None           # file d'attente partagée (ex. « gen » : une génération à la fois)
         self.seq = next(_seq)
+        self.who = ""
 
     def logline(self, s):
         self.log.append(s.rstrip())
@@ -40,9 +41,14 @@ class Job:
             self.detail = detail
 
     def to_dict(self):
-        return {"id": self.id, "kind": self.kind, "label": self.label, "state": self.state,
-                "progress": self.progress, "detail": self.detail, "error": self.error,
-                "result": self.result, "log": self.log[-60:], "elapsed": time.time() - self.started}
+        d = {"id": self.id, "kind": self.kind, "label": self.label, "state": self.state,
+             "progress": self.progress, "detail": self.detail, "error": self.error,
+             "result": self.result, "log": self.log[-60:], "elapsed": time.time() - self.started, "seq": self.seq}
+        if self.state == "running" and self.queue:
+            # ce qui passe avant cette tâche dans sa file : celle en cours, puis celles en attente
+            d["ahead"] = [{"label": j.label, "who": j.who, "progress": j.progress, "active": not ahead(j)}
+                          for j in sorted(ahead(self), key=lambda x: x.seq)]
+        return d
 
 
 def start(kind, label, fn, queue=None, who=""):
@@ -51,6 +57,7 @@ def start(kind, label, fn, queue=None, who=""):
     des demandes (plusieurs navigateurs peuvent demander une génération en même temps)."""
     job = Job(kind, label)
     job.queue = queue
+    job.who = who
     with _lock:
         _jobs[job.id] = job
     journal.log(f"tâche {job.id} demandée{' par ' + who if who else ''} : {label}")

@@ -31,13 +31,11 @@ async function loadYoutube() {
     root.dataset.ready = '1';
   }
   await ytRefresh();
-  // page rechargée pendant un résumé : reprendre son suivi
-  if (!Object.values(JOBS).some(x => x.boxId === 'yt-job')) {
-    try {
-      const j = (await api('/api/jobs')).find(x => x.kind === 'youtube' && x.state === 'running' && x.label.startsWith('Résumé'));
-      if (j) { $('yt-go').disabled = true; ytWatch(j.id); }
-    } catch (e) { /* pas de suivi à reprendre */ }
-  }
+  // page rechargée pendant des résumés : reprendre leur suivi, dans l'ordre des demandes
+  try {
+    (await api('/api/jobs')).filter(x => x.kind === 'youtube' && x.state === 'running' && x.label.startsWith('Résumé'))
+      .sort((a, b) => a.seq - b.seq).forEach(j => ytWatch(j.id));
+  } catch (e) { /* pas de suivi à reprendre */ }
   const last = LS.get('yt.last', '');
   if (last && !Y.item) ytOpen(last);
 }
@@ -114,19 +112,25 @@ async function ytInstall(what = 'install') {
 async function ytRun(again) {
   const url = again ? Y.item.meta.webpage_url : $('yt-url').value.trim();
   if (!url) return;
-  $('yt-go').disabled = true;
+  $('yt-go').disabled = true;   // le temps de la demande (double clic) : on peut en mettre d'autres en file ensuite
   try {
     const d = await api('/api/youtube/run', {url, again: !!again});
-    if (d.item) { ytShow(d.item); $('yt-go').disabled = false; return; }
-    if (d.ahead) toast(`En file d’attente : ${d.ahead} tâche${d.ahead > 1 ? 's' : ''} avant celle-ci (génération en cours)`, 5000);
+    if (d.item) { ytShow(d.item); return; }
+    if (!again) $('yt-url').value = '';
     ytWatch(d.job.id);
-  } catch (e) { toast(e.message, 8000); $('yt-go').disabled = false; }
+  } catch (e) { toast(e.message, 8000); } finally { $('yt-go').disabled = false; }
 }
 
+// un bloc de suivi par résumé demandé, chacun avec sa file d'attente
 function ytWatch(id) {
-  watchJob(id, 'yt-job', (j) => {
-    $('yt-go').disabled = false;
-    if (j.state === 'done') { $('yt-job').innerHTML = ''; ytShow(j.result); ytRefresh(); }
+  const box = 'yt-job-' + id;
+  if ($(box)) return;
+  $('yt-job').insertAdjacentHTML('beforeend', `<div id="${box}"></div>`);
+  watchJob(id, box, (j) => {
+    if (j.state !== 'done') return;
+    $(box).remove();
+    if (!Y.asking) ytShow(j.result);   // pas pendant une question sur le résumé affiché
+    ytRefresh();
   });
 }
 
