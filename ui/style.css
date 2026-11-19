@@ -246,3 +246,12 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .jqueue li{margin:2px 0}
 .jqueue .jq-l{overflow-wrap:anywhere}
 .jqueue .jq-s{color:var(--muted);white-space:nowrap;margin-left:6px}
+/* Podcasts : galerie des abonnements et podcast ouvert */
+.pc-gal{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+@media (max-width:600px){.pc-gal{grid-template-columns:repeat(auto-fill,minmax(90px,1fr))}.pc-gal .yt-ct{padding:6px 8px}.pc-gal .yt-ct b{font-size:12px}}
+#pc-feed .pc-head{flex-wrap:wrap}#pc-feed .pc-name{min-width:min(220px,60%)}
+.pc-new{background:var(--acc);color:#0b1020;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.yt-thumb .pc-new{position:absolute;left:6px;top:6px}
+.pc-ep.new b{color:var(--acc)}
+#pc-feed{border:1px solid var(--acc);border-radius:10px;margin-top:12px;background:var(--bg)}
+#pc-pick .pc-feed{margin-top:10px}

@@ -13,8 +13,8 @@ tout se règle dans son interface — pas de ComfyUI, pas de nœuds.
 
 L'onglet **YouTube** résume une vidéo avec le modèle de texte lancé : l'essentiel en une
 phrase (un point par sujet), l'explication en un clic, et vos propres questions sur la vidéo.
-L'onglet **Podcasts** fait de même pour les épisodes d'un podcast (flux RSS), et résume tout
-seul les nouveaux épisodes des podcasts suivis.
+L'onglet **Podcasts** fait de même pour les épisodes d'un podcast (flux RSS) : galerie de vos
+abonnements (importables de Podcast Addict) avec leurs nouveaux épisodes, et épisodes isolés.
 
 Python 3.10+ **sans aucune dépendance** (bibliothèque standard uniquement). Interface web
 vanilla (HTML/JS/CSS), servie sur `127.0.0.1` ; accessible depuis d'autres appareils à
@@ -135,8 +135,8 @@ Portail sur une autre machine : ajoutez son adresse, `--allow 192.168.1.10` (Lin
 `ondemand.py`) ou `-Autorisees 192.168.1.10` (WSL). Sous WSL, le script ouvre aussi le port
 dans le pare-feu et vérifie que WSL partage l'adresse du PC (`networkingMode=mirrored` dans
 `%UserProfile%\.wslconfig`, Windows 11 22H2+). Autres réglages : `--idle 0` (ne jamais
-arrêter), `--port`, `--podcasts 21600` (si un podcast est suivi, le portier réveille le launcher
-toutes les 6 h pour résumer ses nouveaux épisodes ; `0` = jamais). Vérifier depuis le portail : `curl -I http://ADRESSE_DU_CALCUL:8765`
+arrêter), `--port`, `--podcasts 21600` (s'il y a un abonnement à un podcast, le portier réveille le
+launcher toutes les 6 h pour qu'il cherche les nouveaux épisodes ; `0` = jamais). Vérifier depuis le portail : `curl -I http://ADRESSE_DU_CALCUL:8765`
 → `200` (`403` : adresse non autorisée ; pas de réponse : pare-feu ou mode réseau de WSL).
 
 ### 3. Le portail
@@ -551,7 +551,7 @@ Choix et pistes écartées : [docs/youtube.md](docs/youtube.md).
 **🎙 Podcasts** prend le **flux RSS** d'un podcast, son lien **Apple Podcasts** (le flux est
 demandé à l'API d'iTunes) ou l'adresse de sa page web (si elle annonce son flux), et liste ses
 derniers épisodes ; « Résumer » en donne le résumé, présenté comme dans l'onglet YouTube (même
-modèle, même langue, mêmes questions libres, même galerie). Spotify ne publie pas les flux de
+modèle, même langue, mêmes questions libres). Spotify ne publie pas les flux de
 ses podcasts : passez par leur lien Apple Podcasts. L'audio de l'épisode est téléchargé
 directement depuis le flux puis transcrit par Whisper (les podcasts n'ont pas de sous-titres) ;
 les chapitres écrits dans la description (« 10:47 - … ») sont repris. Le prompt ajoute une
@@ -560,11 +560,28 @@ la question du titre (sans elle, un épisode de 1 h 46 n'était résumé que sur
 demi-heure). Mesuré sur un épisode de 1 h 46 (Qwen 3.8 27B, RTX 3090) : ~6 min de bout en
 bout, dont 4 min 30 de Whisper et 20 s de résumé.
 
-**Suivre un podcast** (case « suivre » à l'ajout, ou « suivi » dans la liste) : les épisodes
-publiés ensuite sont résumés tout seuls, dans la file des générations. Le launcher vérifie les
-flux à son démarrage puis toutes les heures ; derrière le portier, qui l'éteint quand il ne sert
-pas, celui-ci le réveille toutes les 6 h (`--podcasts`) tant qu'un podcast est suivi. Au plus
-2 nouveaux épisodes par podcast et par vérification. Tout est rangé dans `podcasts/` :
+Deux galeries :
+
+- **Mes abonnements** (« S'abonner ») : la pochette de chaque podcast, ceux qui ont de
+  **nouveaux épisodes** en tête (badge « N nouveaux » : parus depuis la dernière fois qu'on l'a
+  ouvert). Un clic l'ouvre : ses derniers épisodes, puis ses autres épisodes déjà résumés ; un
+  épisode se résume d'un clic (« voir le résumé » s'il l'est déjà). Le launcher relit le flux de
+  chaque abonnement une fois par jour (à son démarrage puis toutes les heures, il relit ceux qui
+  ne l'ont pas été depuis 23 h) ; derrière le portier, qui l'éteint quand il ne sert pas,
+  celui-ci le réveille toutes les 6 h (`--podcasts`) tant qu'il y a un abonnement.
+  **Résumé auto** (case dans le podcast ouvert) : ses épisodes publiés ensuite sont résumés tout
+  seuls, dans la file des générations (flux relu toutes les heures, au plus 2 nouveaux épisodes
+  par vérification).
+- **Épisodes isolés** (« Un seul épisode ») : un épisode résumé sans s'abonner à son podcast.
+  Lien d'un épisode (Apple Podcasts `…?i=…`, retrouvé grâce à l'API d'iTunes, ou page de
+  l'épisode) : il est résumé tout de suite ; lien d'un podcast : choisissez parmi ses 30 derniers
+  épisodes. Se désabonner d'un podcast range ses résumés ici.
+
+**Importer de Podcast Addict** : sa sauvegarde (Paramètres → Sauvegarde/Restauration, fichier
+`.backup` : une archive zip de sa base SQLite, dont on lit la table `podcasts`, abonnements
+seulement, et leurs pochettes) ou un export OPML (le format commun des applis de podcasts).
+Les abonnements absents sont ajoutés sans résumé auto, puis leurs flux lus dans une tâche ; un
+flux injoignable est signalé sur sa vignette. Tout est rangé dans `podcasts/` :
 `feeds.json` (les podcasts), `<id>.json` par épisode résumé, et les pochettes réduites à 320 px.
 
 ## Espace disque
