@@ -185,6 +185,7 @@ def _public_feed(f):
     dernière ouverture du podcast et pas encore résumés."""
     lat = f.get("latest") or []
     return {k: f.get(k) for k in ("id", "url", "title", "author", "follow", "checked", "error")} | {
+        "added": f.get("added", 0), "count": f.get("count", 0),   # pour trier la galerie
         "last": lat[0]["date"] if lat else 0,
         "new": sum(1 for e in lat if e["date"] > f.get("opened", f.get("added", 0)) and not _file(e["id"]).is_file())}
 
@@ -192,7 +193,7 @@ def _public_feed(f):
 def _latest(f, pod):
     """Ce qu'on garde d'une lecture du flux : de quoi afficher le podcast et compter ses nouveautés."""
     f.update(title=pod["title"], author=pod["author"], image=pod["image"] or f.get("image"), checked=time.time(),
-             error="", latest=[{"id": e["id"], "date": e["date"]} for e in pod["episodes"][:20]])
+             error="", count=len(pod["episodes"]), latest=[{"id": e["id"], "date": e["date"]} for e in pod["episodes"][:20]])
 
 
 def episodes(pod, n=12):
@@ -380,7 +381,8 @@ def check(start):
     activation et pas encore vu (NEW_PER_CHECK au plus par podcast : un flux réécrit ne déclenche
     pas cent résumés). Renvoie le nombre de résumés lancés."""
     started = 0
-    for fid in [x["id"] for x in feeds() if x.get("follow") or time.time() - x.get("checked", 0) > DAILY]:
+    # (« count » absent : abonnement lu avant qu'on garde son nombre d'épisodes, relu une fois pour le tri)
+    for fid in [x["id"] for x in feeds() if x.get("follow") or time.time() - x.get("checked", 0) > DAILY or "count" not in x]:
         try:
             pod = fetch_feed(_find(feeds(), fid)["url"])
             err = ""

@@ -564,7 +564,8 @@ Deux galeries :
 
 - **Mes abonnements** (« S'abonner ») : la pochette de chaque podcast, ceux qui ont de
   **nouveaux épisodes** en tête (badge « N nouveaux » : parus depuis la dernière fois qu'on l'a
-  ouvert). Un clic l'ouvre : ses derniers épisodes, puis ses autres épisodes déjà résumés ; un
+  ouvert). Autres tris (mémorisés sur l'appareil) : épisode le plus récent, plus d'épisodes
+  publiés, derniers abonnements, nom. Un clic l'ouvre : ses derniers épisodes, puis ses autres épisodes déjà résumés ; un
   épisode se résume d'un clic (« voir le résumé » s'il l'est déjà). Le launcher relit le flux de
   chaque abonnement une fois par jour (à son démarrage puis toutes les heures, il relit ceux qui
   ne l'ont pas été depuis 23 h) ; derrière le portier, qui l'éteint quand il ne sert pas,
