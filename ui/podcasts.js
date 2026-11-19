@@ -29,6 +29,11 @@ async function loadPodcasts() {
       <div id="pc-pick"></div>
       <div id="pc-job"></div></section>
     <section class="card"><h1>Mes abonnements <span class="muted small" id="pc-nsubs"></span></h1>
+      <div class="row-inline small"><span class="muted">Trier :</span>
+        <select id="pc-sort" onchange="LS.set('pc.sort', this.value); pcFeeds()">
+          <option value="new">nouveaux épisodes d’abord</option><option value="last">épisode le plus récent</option>
+          <option value="count">plus d’épisodes publiés</option><option value="added">derniers abonnements</option>
+          <option value="title">nom (A → Z)</option></select></div>
       <div id="pc-feeds" class="yt-gal pc-gal"></div>
       <div id="pc-feed" class="hidden"></div></section>
     <section class="card hidden" id="pc-result"></section>
@@ -36,6 +41,7 @@ async function loadPodcasts() {
       <p class="muted small">Résumés d'épisodes dont vous ne suivez pas le podcast.</p>
       <div id="pc-history" class="yt-gal"></div></section>`;
     root.dataset.ready = '1';
+    $('pc-sort').value = LS.get('pc.sort', 'new');
   }
   await pcRefresh();
   const last = LS.get('pc.last', '');
@@ -62,15 +68,22 @@ async function pcRefresh() {
     </div>`).join('') : '<span class="muted">aucun pour l’instant</span>';
 }
 
-// galerie des abonnements : pochette, nouveaux épisodes, ceux qui ont publié récemment d'abord
+// galerie des abonnements : pochette et nouveaux épisodes, dans l'ordre choisi (mémorisé sur cet appareil)
+const PC_SORT = {
+  new: (a, b) => (b.new > 0) - (a.new > 0) || b.last - a.last,
+  last: (a, b) => b.last - a.last,
+  count: (a, b) => b.count - a.count || b.last - a.last,
+  added: (a, b) => b.added - a.added,
+  title: (a, b) => a.title.localeCompare(b.title, 'fr', {sensitivity: 'base'}),
+};
 function pcFeeds() {
-  const f = [...P.status.feeds].sort((a, b) => (b.new > 0) - (a.new > 0) || b.last - a.last);
+  const f = [...P.status.feeds].sort(PC_SORT[$('pc-sort').value] || PC_SORT.new);
   $('pc-nsubs').textContent = f.length ? `(${f.length})` : '';
   $('pc-feeds').innerHTML = f.length ? f.map(x => `<div class="yt-card ${P.open === x.id ? 'on' : ''}" onclick="pcToggle('${x.id}')" title="${esc(x.title)}">
       <div class="yt-thumb"><img loading="lazy" alt="" src="/api/podcasts/thumb?id=${x.id}" onerror="this.remove()">
         ${x.new ? `<span class="pc-new">${x.new} nouveau${x.new > 1 ? 'x' : ''}</span>` : ''}
         ${x.follow ? '<span class="yt-dur" title="nouveaux épisodes résumés tout seuls">auto</span>' : ''}</div>
-      <div class="yt-ct"><b>${esc(x.title)}</b><span class="muted small">${x.error ? '⚠ flux injoignable' : x.last ? 'dernier : ' + pcDate(x.last) : esc(x.author || '')}</span></div>
+      <div class="yt-ct"><b>${esc(x.title)}</b><span class="muted small">${x.error ? '⚠ flux injoignable' : x.last ? 'dernier : ' + pcDate(x.last) : esc(x.author || '')}${x.count ? ` · ${x.count} ép.` : ''}</span></div>
     </div>`).join('') : '<span class="muted">aucun pour l’instant : abonnez-vous ci-dessus ou importez vos abonnements de Podcast Addict</span>';
   pcFeedPanel();
 }
