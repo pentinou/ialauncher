@@ -253,5 +253,5 @@ table.cmp th:first-child,table.cmp td:first-child{text-align:left}
 .pc-new{background:var(--acc);color:#0b1020;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap}
 .yt-thumb .pc-new{position:absolute;left:6px;top:6px}
 .pc-ep.new b{color:var(--acc)}
-#pc-feed{border:1px solid var(--acc);border-radius:10px;margin-top:12px;background:var(--bg)}
+#pc-feed{border-color:var(--acc);padding:0}
 #pc-pick .pc-feed{margin-top:10px}

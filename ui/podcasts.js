@@ -29,14 +29,14 @@ async function loadPodcasts() {
       <div id="pc-pick"></div>
       <div id="pc-job"></div></section>
     <section class="card hidden" id="pc-result"></section>
+    <section class="card hidden" id="pc-feed"></section>
     <section class="card"><h1>Mes abonnements <span class="muted small" id="pc-nsubs"></span></h1>
       <div class="row-inline small"><span class="muted">Trier :</span>
         <select id="pc-sort" onchange="LS.set('pc.sort', this.value); pcFeeds()">
           <option value="new">nouveaux épisodes d’abord</option><option value="last">épisode le plus récent</option>
           <option value="count">plus d’épisodes publiés</option><option value="added">derniers abonnements</option>
           <option value="title">nom (A → Z)</option></select></div>
-      <div id="pc-feeds" class="yt-gal pc-gal"></div>
-      <div id="pc-feed" class="hidden"></div></section>
+      <div id="pc-feeds" class="yt-gal pc-gal"></div></section>
     <section class="card"><h1>Épisodes isolés <span class="muted small" id="pc-count"></span></h1>
       <p class="muted small">Résumés d'épisodes dont vous ne suivez pas le podcast.</p>
       <div id="pc-history" class="yt-gal"></div></section>`;
@@ -88,7 +88,7 @@ function pcFeeds() {
   pcFeedPanel();
 }
 
-// podcast ouvert : ses réglages et ses épisodes, sous la galerie
+// podcast ouvert : ses réglages et ses épisodes, au-dessus des galeries (qui restent en bas de page)
 function pcFeedPanel() {
   const box = $('pc-feed'), x = P.status.feeds.find(f => f.id === P.open);
   box.classList.toggle('hidden', !x);
@@ -107,7 +107,7 @@ function pcToggle(fid) {
   P.open = P.open === fid ? null : fid;
   if (P.open) delete P.eps[fid];   // ouvert à nouveau : relire le flux (nouvel épisode ?)
   pcFeeds();
-  if (P.open) $('pc-feed').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  if (P.open) $('pc-feed').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
 async function pcEpisodes(fid) {
@@ -140,7 +140,7 @@ async function pcAdd() {
     toast(`Abonné à ${d.feed.title}`, 4000);
     P.open = d.feed.id; P.eps[d.feed.id] = d.episodes;
     await pcRefresh();
-    $('pc-feed').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    $('pc-feed').scrollIntoView({behavior: 'smooth', block: 'start'});
   } catch (e) { toast(e.message, 8000); }
   $('pc-go').disabled = false;
 }
