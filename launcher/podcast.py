@@ -186,7 +186,7 @@ def _public_feed(f):
     lat = f.get("latest") or []
     return {k: f.get(k) for k in ("id", "url", "title", "author", "follow", "checked", "error")} | {
         "last": lat[0]["date"] if lat else 0,
-        "new": sum(1 for e in lat if e["date"] > f.get("opened", 0) and not _file(e["id"]).is_file())}
+        "new": sum(1 for e in lat if e["date"] > f.get("opened", f.get("added", 0)) and not _file(e["id"]).is_file())}
 
 
 def _latest(f, pod):
@@ -249,7 +249,7 @@ def feed_episodes(fid):
     with _LOCK:
         lst = feeds()
         f = _find(lst, fid)
-        before = f.get("opened", 0)
+        before = f.get("opened", f.get("added", 0))
         _latest(f, pod)
         f["opened"] = time.time()
         _save_feeds(lst)
