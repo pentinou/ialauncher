@@ -182,12 +182,12 @@ def _llm_for_youtube(job, need=0):
     return SERVER.base_url()
 
 
-def _podcast_job(fid, eid, who="", title=""):
+def _podcast_job(furl, eid, who="", title=""):
     """Tâche « résumé d'un épisode » dans la file des générations ; celle déjà en cours pour
     le même épisode si elle existe (clic pendant un résumé automatique, double clic…)."""
     j = next((x for x in jobs.running("podcast") if getattr(x, "episode", None) == eid), None)
     if not j:
-        j = jobs.start("podcast", f"Résumé podcast — {title or eid}", lambda job: podcast.run(job, fid, eid, _llm_for_youtube),
+        j = jobs.start("podcast", f"Résumé podcast — {title or eid}", lambda job: podcast.run(job, furl, eid, _llm_for_youtube),
                        queue="gen", who=who)
         j.episode = eid
     return j
@@ -199,13 +199,13 @@ def _titre_youtube(job, vid):
         job.label = f"Résumé YouTube — {t}"
 
 
-PODCAST_CHECK = 3600   # vérification des podcasts suivis : au démarrage, puis toutes les heures
+PODCAST_CHECK = 3600   # vérification des abonnements dus : au démarrage, puis toutes les heures
 
 
 def _suivre_podcasts():
     while True:
         try:
-            n = podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts", e["title"]))
+            n = podcast.check(lambda f, e: _podcast_job(f["url"], e["id"], "suivi des podcasts", e["title"]))
             if n:
                 journal.log(f"podcasts suivis : {n} nouvel(s) épisode(s) à résumer")
         except Exception:  # noqa: BLE001
@@ -306,8 +306,11 @@ class Handler(BaseHTTPRequestHandler):
             rec = youtube.load(q.get("id", ""))
             return self._json(youtube.public(rec) if rec else {"error": "vidéo inconnue"}, 200 if rec else 404)
         if path == "/api/podcasts":
-            return self._json({"tools": youtube.status(), "feeds": [podcast._public_feed(f) for f in podcast.feeds()],
-                               "history": podcast.history(), "lang": youtube.summary_lang(), "model": youtube.model_id(),
+            subs = podcast.feeds()
+            ids = {f["id"] for f in subs}
+            return self._json({"tools": youtube.status(), "feeds": [podcast._public_feed(f) for f in subs],
+                               "singles": [h for h in podcast.history() if h["feed"] not in ids],   # épisodes isolés
+                               "lang": youtube.summary_lang(), "model": youtube.model_id(),
                                "llm": SERVER.status()["model"] if SERVER.state == "ready" else None,
                                "running": {j.episode: j.id for j in jobs.running("podcast") if getattr(j, "episode", None)}})
         if path == "/api/podcasts/episodes":
@@ -424,6 +427,14 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 return self._json(sdcpp.grid_png_part(q.get("kind", "image"), q.get("dir", ""), q.get("token", ""),
                                                       int(q.get("offset", 0)), data, q.get("last") == "1"))
+            if u.path == "/api/podcasts/import":       # fichier envoyé tel quel (sauvegarde Podcast Addict, OPML)
+                items = podcast.parse_import(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                if not items:
+                    return self._json({"error": "aucun abonnement dans ce fichier"}, 400)
+                new = podcast.import_subs(items)
+                j = jobs.start("podcast-import", f"Import de {len(new)} podcast{'s' if len(new) > 1 else ''}",
+                               lambda job: podcast.refresh(job, new), who=self._who()) if new else None
+                return self._json({"found": len(items), "added": len(new), "job": j.to_dict() if j else None})
             body = self._body()
             self._post(u.path, body)
         except Exception as e:  # noqa: BLE001
@@ -623,12 +634,17 @@ class Handler(BaseHTTPRequestHandler):
             podcast.remove(b["feed"])
             return self._json({"ok": True})
         if path == "/api/podcasts/check":   # le portier réveille le launcher pour ça (ondemand.py --podcasts)
-            return self._json({"started": podcast.check(lambda f, e: _podcast_job(f["id"], e["id"], "suivi des podcasts", e["title"]))})
+            return self._json({"started": podcast.check(lambda f, e: _podcast_job(f["url"], e["id"], "suivi des podcasts", e["title"]))})
+        if path == "/api/podcasts/lookup":
+            return self._json(podcast.lookup(b.get("url", "")))
         if path == "/api/podcasts/run":
             rec = podcast.load(b.get("id", ""))
             if rec and not b.get("again"):
                 return self._json({"item": youtube.public(rec)})
-            j = _podcast_job(b.get("feed", "") or (rec or {}).get("meta", {}).get("feed", ""), b["id"], self._who(),
+            # flux : celui donné (épisode isolé), celui de l'abonnement, ou celui du résumé à refaire
+            furl = b.get("url") or next((f["url"] for f in podcast.feeds() if f["id"] == b.get("feed")), "") \
+                or (rec or {}).get("meta", {}).get("feed_url", "")
+            j = _podcast_job(furl, b["id"], self._who(),
                              b.get("title") or (rec or {}).get("meta", {}).get("title", ""))
             return self._json({"job": j.to_dict(), "ahead": len(jobs.ahead(j))})
         if path == "/api/podcasts/delete":

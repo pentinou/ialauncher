@@ -10,8 +10,9 @@ en train de traiter pour un agent (voir /api/activity).
 
     python3 ondemand.py [--allow IP_DU_PORTAIL] [--listen 0.0.0.0] [--port 8765] [--idle 600] [--podcasts 21600]
 
-Podcasts suivis (onglet Podcasts) : le portier réveille le launcher toutes les --podcasts
-secondes pour qu'il cherche les nouveaux épisodes et les résume ; il se rendort ensuite.
+Abonnements de l'onglet Podcasts : le portier réveille le launcher toutes les --podcasts
+secondes pour qu'il cherche les nouveaux épisodes (une fois par jour par podcast ; à chaque
+réveil et résumés tout seuls pour ceux en « résumé auto ») ; il se rendort ensuite.
 
 Pensé pour être joint par un portail qui, lui, demande une connexion (YunoHost, nginx
 avec mot de passe…) : comme le launcher, le portier n'a PAS d'authentification.
@@ -130,11 +131,11 @@ class Launcher:
         return a.get("occupe") or time.time() - a.get("derniere_requete", 0) < self.idle
 
     def suivi_podcasts(self):
-        """Un podcast est-il suivi ? (fichier de l'onglet Podcasts, lu sans démarrer le launcher)"""
+        """Y a-t-il un abonnement ? (fichier de l'onglet Podcasts, lu sans démarrer le launcher)"""
         sys.path.insert(0, str(ICI))
         from launcher import paths
         try:
-            return any(f.get("follow") for f in json.loads((paths.home() / "podcasts" / "feeds.json").read_text()))
+            return bool(json.loads((paths.home() / "podcasts" / "feeds.json").read_text()))
         except (OSError, ValueError):
             return False
 
@@ -144,9 +145,9 @@ class Launcher:
             if self.podcasts and time.time() - self.reveil > self.podcasts:
                 self.reveil = time.time()
                 if not self.vivant() and self.suivi_podcasts():
-                    # au démarrage, le launcher vérifie les podcasts suivis et lance les résumés ;
+                    # au démarrage, le launcher relit les flux dus et lance les résumés auto ;
                     # ses tâches le gardent éveillé, puis l'arrêt après inactivité reprend
-                    print(f"[{time.strftime('%T')}] réveil pour les podcasts suivis", flush=True)
+                    print(f"[{time.strftime('%T')}] réveil pour les abonnements aux podcasts", flush=True)
                     self.demarrer()
                     self.attendre()
                     self.derniere = time.time()
@@ -239,8 +240,8 @@ def main():
                     help="adresses IP acceptées, séparées par des virgules (défaut 127.0.0.1 : cette machine "
                          "seulement ; « * » = toutes, sans aucune protection)")
     ap.add_argument("--podcasts", type=int, default=21600,
-                    help="secondes entre deux réveils du launcher pour les podcasts suivis (défaut 21600 = 6 h ; "
-                         "0 = jamais ; seulement si un podcast est suivi)")
+                    help="secondes entre deux réveils du launcher pour les abonnements aux podcasts (défaut 21600 = 6 h ; "
+                         "0 = jamais ; seulement s'il y a un abonnement)")
     a = ap.parse_args()
     autorisees = {x.strip() for x in a.allow.split(",") if x.strip() and x.strip() != "*"}
 

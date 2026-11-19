@@ -2,25 +2,33 @@
 flux), audio de l'épisode transcrit par Whisper, puis résumé et questions libres exactement
 comme dans l'onglet YouTube (mêmes fonctions, même modèle, même langue des résumés).
 
-Podcasts suivis : check() (appelé au démarrage du launcher puis toutes les heures, voir
-web.py) résume tout seul les épisodes parus depuis qu'on suit le podcast.
+Abonnements (feeds.json, importables d'une sauvegarde Podcast Addict) : check() (appelé au
+démarrage du launcher puis toutes les heures, voir web.py) relit leurs flux une fois par jour
+pour signaler les nouveaux épisodes ; ceux en « résumé auto » (follow) sont relus toutes les
+heures et leurs nouveaux épisodes résumés tout seuls. Un épisode résumé sans abonnement à son
+podcast est un « épisode isolé ».
 """
 import email.utils
 import hashlib
 import html
+import io
 import json
 import os
 import re
+import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
+import zipfile
 
 from . import paths, download, youtube
 
 ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
 LOOKUP = "https://itunes.apple.com/lookup?id={}"
 NEW_PER_CHECK = 2   # épisodes nouveaux résumés au plus par podcast et par vérification
+DAILY = 23 * 3600   # abonnement sans résumé auto : flux relu une fois par jour (la boucle tourne toutes les heures)
 _LOCK = threading.Lock()
 
 _FIRST = "Tu résumes des vidéos YouTube pour quelqu'un qui ne veut pas perdre de temps à les regarder."
@@ -173,7 +181,18 @@ def _find(lst, fid):
 
 
 def _public_feed(f):
-    return {k: f.get(k) for k in ("id", "url", "title", "author", "follow", "checked", "error")}
+    """Pour la galerie : « last » = date du dernier épisode, « new » = épisodes parus depuis la
+    dernière ouverture du podcast et pas encore résumés."""
+    lat = f.get("latest") or []
+    return {k: f.get(k) for k in ("id", "url", "title", "author", "follow", "checked", "error")} | {
+        "last": lat[0]["date"] if lat else 0,
+        "new": sum(1 for e in lat if e["date"] > f.get("opened", 0) and not _file(e["id"]).is_file())}
+
+
+def _latest(f, pod):
+    """Ce qu'on garde d'une lecture du flux : de quoi afficher le podcast et compter ses nouveautés."""
+    f.update(title=pod["title"], author=pod["author"], image=pod["image"] or f.get("image"), checked=time.time(),
+             error="", latest=[{"id": e["id"], "date": e["date"]} for e in pod["episodes"][:20]])
 
 
 def episodes(pod, n=12):
@@ -183,15 +202,16 @@ def episodes(pod, n=12):
 
 
 def add(url, follow):
-    """Ajoute (ou retrouve) un podcast. Suivi : seuls les épisodes publiés après seront résumés tout seuls."""
+    """Abonnement à un podcast (ou celui qui existe). Résumé auto : seuls les épisodes publiés
+    après seront résumés tout seuls."""
     pod = fetch_feed(feed_url(url))
     with _LOCK:
         lst = feeds()
         f = next((x for x in lst if x["url"] == pod["url"]), None)
         if not f:
-            f = {"id": _hid(pod["url"]), "url": pod["url"], "added": time.time()}
+            f = {"id": _hid(pod["url"]), "url": pod["url"], "added": time.time(), "opened": time.time()}
             lst.insert(0, f)
-        f.update(title=pod["title"], author=pod["author"], image=pod["image"])
+        _latest(f, pod)
         if follow and not f.get("follow"):
             _follow(f, pod)
         _save_feeds(lst)
@@ -222,27 +242,160 @@ def remove(fid):
 
 
 def feed_episodes(fid):
-    return episodes(fetch_feed(_find(feeds(), fid)["url"]))
+    """Épisodes d'un abonnement ouvert dans la galerie : les derniers du flux (« new » : parus
+    depuis la fois précédente), puis ses autres épisodes déjà résumés. L'ouvrir remet ses
+    nouveautés à zéro."""
+    pod = fetch_feed(_find(feeds(), fid)["url"])
+    with _LOCK:
+        lst = feeds()
+        f = _find(lst, fid)
+        before = f.get("opened", 0)
+        _latest(f, pod)
+        f["opened"] = time.time()
+        _save_feeds(lst)
+    eps = [e | {"new": e["date"] > before and not e["done"]} for e in episodes(pod)]
+    ids = {e["id"] for e in eps}
+    return eps + [{k: h[k] for k in ("id", "title", "date", "duration")} | {"done": True, "new": False}
+                  for h in history() if h["feed"] == fid and h["id"] not in ids]
+
+
+def lookup(url):
+    """« Un seul épisode » : le podcast d'après le lien collé, ses derniers épisodes et, si le
+    lien désigne un épisode (Apple Podcasts « …?i=… », page de l'épisode), celui-là."""
+    furl = feed_url(url)
+    pod = fetch_feed(furl)
+    ids = {e["id"] for e in pod["episodes"]}
+    eid = next((e["id"] for e in pod["episodes"] if e["link"] and e["link"].rstrip("/") == url.strip().rstrip("/")), None)
+    m = re.search(r"podcasts\.apple\.com/.*/id(\d+).*[?&]i=(\d+)", url)
+    if m and not eid:
+        res = download.fetch_json(LOOKUP.format(m.group(1)) + "&entity=podcastEpisode&limit=300").get("results") or []
+        ep = next((r for r in res if str(r.get("trackId")) == m.group(2)), None)
+        if ep:
+            eid = next((_hid(k.strip()) for k in (ep.get("episodeGuid"), ep.get("episodeUrl")) if k and _hid(k.strip()) in ids),
+                       None) or next((e["id"] for e in pod["episodes"] if e["title"] == (ep.get("trackName") or "").strip()), None)
+    return {"feed": {"id": _hid(furl), "url": furl, "title": pod["title"], "author": pod["author"]},
+            "episodes": episodes(pod, 30), "episode": eid}
+
+
+# ---------------------------------------------------------------- import de Podcast Addict
+
+def _from_opml(data):
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        raise RuntimeError("fichier non reconnu : il faut la sauvegarde de Podcast Addict (.backup) ou un export OPML") from None
+    return [(o.get("xmlUrl").strip(), o.get("text") or o.get("title") or "", None)
+            for o in root.iter("outline") if (o.get("xmlUrl") or "").startswith("http")]
+
+
+def _from_sqlite(data):
+    """Base de Podcast Addict : table « podcasts » (feed_url, name, subscribed_status = 1 pour un
+    abonnement, thumbnail_id → table « bitmaps » de leurs pochettes)."""
+    with tempfile.NamedTemporaryFile(suffix=".db", dir=_dir(), delete=False) as t:
+        t.write(data)
+    try:
+        con = sqlite3.connect(t.name)
+        try:
+            tables = [r[0] for r in con.execute("select name from sqlite_master where type = 'table'")]
+            cols = {tb: [r[1] for r in con.execute(f'pragma table_info("{tb}")')] for tb in tables}
+            tb = next((x for x in ["podcasts"] + tables if x in cols and "feed_url" in cols[x]), None)
+            if not tb:
+                raise RuntimeError("pas de liste de podcasts dans cette sauvegarde (tables : " + ", ".join(tables[:30]) + ")")
+            c = cols[tb]
+            pic = "thumbnail_id" in c and "url" in cols.get("bitmaps", [])
+            rows = con.execute(f'select p.feed_url, {"p.name" if "name" in c else "null"}, {"b.url" if pic else "null"} from "{tb}" p'
+                               + (" left join bitmaps b on b._id = p.thumbnail_id" if pic else "")
+                               + (" where p.subscribed_status = 1" if "subscribed_status" in c else "")).fetchall()
+        finally:
+            con.close()
+    finally:
+        os.unlink(t.name)
+    return [(u.strip(), n or "", im) for u, n, im in rows if (u or "").strip().startswith("http")]
+
+
+def parse_import(data):
+    """Abonnements d'une sauvegarde Podcast Addict (.backup : zip de sa base SQLite), de sa base
+    seule, ou d'un export OPML (le format commun des applis de podcasts) : [(flux, nom, image)]."""
+    if data[:2] == b"PK":
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = z.namelist()
+            db = next((n for n in names if n.lower().endswith(".db")), None)
+            if db:
+                return _from_sqlite(z.read(db))
+            opml = next((n for n in names if n.lower().endswith((".opml", ".xml"))), None)
+            if opml:
+                return _from_opml(z.read(opml))
+        raise RuntimeError("cette archive ne contient ni la base de Podcast Addict (.db) ni un fichier OPML")
+    if data[:16] == b"SQLite format 3\x00":
+        return _from_sqlite(data)
+    return _from_opml(data)
+
+
+def import_subs(items):
+    """Ajoute les abonnements pas encore présents (sans résumé auto) ; leurs flux sont lus
+    ensuite par refresh(). Renvoie leurs identifiants."""
+    now, new = time.time(), []
+    with _LOCK:
+        lst = feeds()
+        have = {x["url"] for x in lst}
+        for url, title, image in items:
+            if url in have:
+                continue
+            have.add(url)
+            lst.append({"id": _hid(url), "url": url, "title": title or url, "author": "", "image": image,
+                        "added": now, "opened": now})
+            new.append(lst[-1]["id"])
+        _save_feeds(lst)
+    return new
+
+
+def refresh(job, ids):
+    """Tâche : lit le flux de chaque podcast importé (titre, auteur, pochette, derniers épisodes)."""
+    bad = 0
+    for i, fid in enumerate(ids):
+        if job.cancel_requested:
+            break
+        f = next((x for x in feeds() if x["id"] == fid), None)
+        if not f:
+            continue
+        job.set(i / len(ids), f"flux {i + 1}/{len(ids)} : {f['title']}")
+        try:
+            pod, err = fetch_feed(f["url"]), ""
+        except Exception as e:  # noqa: BLE001 — affiché sur sa vignette
+            pod, err, bad = None, str(e)[:200], bad + 1
+        with _LOCK:
+            lst = feeds()
+            f = next((x for x in lst if x["id"] == fid), None)
+            if f and pod:
+                _latest(f, pod)
+            elif f:
+                f.update(checked=time.time(), error=err)
+            _save_feeds(lst)
+    return {"count": len(ids), "errors": bad}
 
 
 def check(start):
-    """Podcasts suivis : `start(feed, episode)` pour chaque épisode paru depuis le début du
-    suivi et pas encore vu (NEW_PER_CHECK au plus par podcast : un flux réécrit ne déclenche pas
-    cent résumés). Renvoie le nombre de résumés lancés."""
+    """Lit le flux des abonnements dus (une fois par jour ; toutes les heures pour ceux en
+    résumé auto). Résumé auto : `start(feed, episode)` pour chaque épisode paru depuis son
+    activation et pas encore vu (NEW_PER_CHECK au plus par podcast : un flux réécrit ne déclenche
+    pas cent résumés). Renvoie le nombre de résumés lancés."""
     started = 0
-    for fid in [x["id"] for x in feeds() if x.get("follow")]:
+    for fid in [x["id"] for x in feeds() if x.get("follow") or time.time() - x.get("checked", 0) > DAILY]:
         try:
-            pod = fetch_feed(_find(feeds(), fid)["url"])
+            pod = fetch_feed(furl)
             err = ""
         except Exception as e:  # noqa: BLE001 — flux injoignable : on réessaiera
             pod, err = None, str(e)[:200]
         with _LOCK:
             lst = feeds()
-            f = next((x for x in lst if x["id"] == fid and x.get("follow")), None)
+            f = next((x for x in lst if x["id"] == fid), None)
             if not f:
                 continue
-            f.update(checked=time.time(), error=err)
             if pod:
+                _latest(f, pod)
+            else:
+                f.update(checked=time.time(), error=err)
+            if pod and f.get("follow"):
                 seen = set(f.get("seen") or [])
                 new = [e for e in pod["episodes"] if e["id"] not in seen and e["date"] >= f.get("since", 0) - 86400
                        and not _file(e["id"]).is_file()][:NEW_PER_CHECK]
@@ -309,13 +462,13 @@ def history():
         except (OSError, ValueError):
             continue
         m = rec["meta"]
-        out.append({"id": m["id"], "title": m["title"], "channel": m.get("channel"), "duration": m.get("duration"),
+        out.append({"id": m["id"], "feed": m.get("feed"), "title": m["title"], "channel": m.get("channel"), "duration": m.get("duration"),
                     "date": m.get("date"), "at": rec.get("at", 0),
                     "phrase": (rec.get("summary") or {}).get("points", [{}])[0].get("phrase", "")})
     return sorted(out, key=lambda x: x["at"], reverse=True)
 
 
-def run(job, fid, eid, llm):
+def run(job, furl, eid, llm):
     """Tâche « Résumer » d'un épisode : audio → Whisper → résumé. Comme pour YouTube, la
     transcription est gardée à part (<id>.part) jusqu'au résumé, et « refaire le résumé »
     reprend celle déjà enregistrée (et les questions posées)."""
@@ -330,7 +483,7 @@ def run(job, fid, eid, llm):
         base_url = llm(job)
     else:
         job.set(0.02, "lecture du flux du podcast…")
-        pod = fetch_feed(_find(feeds(), fid)["url"])
+        pod = fetch_feed(furl)
         e = next((x for x in pod["episodes"] if x["id"] == eid), None)
         if not e:
             raise RuntimeError("cet épisode n'est plus dans le flux du podcast")
@@ -339,7 +492,7 @@ def run(job, fid, eid, llm):
             raise RuntimeError("il faut Whisper pour transcrire les podcasts : installez-le (bouton en haut de l'onglet)")
         data = {"meta": {"id": eid, "title": e["title"], "channel": pod["title"], "duration": e["duration"],
                          "webpage_url": e["link"], "audio": e["audio"], "image": e["image"], "date": e["date"],
-                         "feed": fid, "language": pod["language"], "chapters": e["chapters"], "subs": None},
+                         "feed": _hid(furl), "feed_url": furl, "language": pod["language"], "chapters": e["chapters"], "subs": None},
                 "transcript": []}
         base_url = llm(job)   # avant Whisper : libère la carte graphique (image, musique)
         data["transcript"], lang = youtube.transcribe(job, data, 0.05, 0.6)
