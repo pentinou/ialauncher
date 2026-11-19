@@ -382,7 +382,7 @@ def check(start):
     started = 0
     for fid in [x["id"] for x in feeds() if x.get("follow") or time.time() - x.get("checked", 0) > DAILY]:
         try:
-            pod = fetch_feed(furl)
+            pod = fetch_feed(_find(feeds(), fid)["url"])
             err = ""
         except Exception as e:  # noqa: BLE001 — flux injoignable : on réessaiera
             pod, err = None, str(e)[:200]
