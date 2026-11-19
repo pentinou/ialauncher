@@ -28,6 +28,7 @@ async function loadPodcasts() {
       <div id="pc-llm" class="small"></div>
       <div id="pc-pick"></div>
       <div id="pc-job"></div></section>
+    <section class="card hidden" id="pc-result"></section>
     <section class="card"><h1>Mes abonnements <span class="muted small" id="pc-nsubs"></span></h1>
       <div class="row-inline small"><span class="muted">Trier :</span>
         <select id="pc-sort" onchange="LS.set('pc.sort', this.value); pcFeeds()">
@@ -36,7 +37,6 @@ async function loadPodcasts() {
           <option value="title">nom (A → Z)</option></select></div>
       <div id="pc-feeds" class="yt-gal pc-gal"></div>
       <div id="pc-feed" class="hidden"></div></section>
-    <section class="card hidden" id="pc-result"></section>
     <section class="card"><h1>Épisodes isolés <span class="muted small" id="pc-count"></span></h1>
       <p class="muted small">Résumés d'épisodes dont vous ne suivez pas le podcast.</p>
       <div id="pc-history" class="yt-gal"></div></section>`;
